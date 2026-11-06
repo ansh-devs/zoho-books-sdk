@@ -1,6 +1,6 @@
 name: Release
 
-# Every push to master publishes package.json's version, unless npm already has it.
+# Every push to master releases if the new commits call for it: fix is a patch, feat a minor, a breaking change a major.
 on:
   push:
     branches: [master]
@@ -15,54 +15,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
     environment: npm
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history and tags, so the version can be worked out from commits
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
+          node-version: 24
           cache: npm
 
-      # Trusted publishing needs npm 11.5.1 or newer; Node 22 ships npm 10.
+      # Trusted publishing needs npm 11.5.1 or newer.
       - run: npm install -g npm@latest
 
-      - name: Check whether this version is already on npm
-        id: version
+      - run: npm ci
+
+      # Fail before anything is tagged or published.
+      - run: npm run check
+
+      # With no release tag yet, mark the first commit v0.0.0 so the first release is 0.1.0, not 1.0.0.
+      - name: Set the starting version
         run: |
-          name=$(node -p "require('./package.json').name")
-          version=$(node -p "require('./package.json').version")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          if npm view "$name@$version" version > /dev/null 2>&1; then
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "$name@$version is already published, nothing to do."
-          else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
+          if [ -z "$(git tag --list 'v*')" ]; then
+            git tag v0.0.0 "$(git rev-list --max-parents=0 HEAD)"
+            git push origin v0.0.0
           fi
-          # A version with a prerelease suffix such as beta.1 goes to the next tag, not latest.
-          case "$version" in *-*) echo "tag=next" >> "$GITHUB_OUTPUT" ;; *) echo "tag=latest" >> "$GITHUB_OUTPUT" ;; esac
 
-      - if: steps.version.outputs.publish == 'true'
-        run: npm ci
-
-      - if: steps.version.outputs.publish == 'true'
-        run: npm run check
-
-      # The check already ran above, so skip prepublishOnly running it again.
-      - if: steps.version.outputs.publish == 'true'
-        run: npm publish --provenance --access public --tag ${{ steps.version.outputs.tag }} --ignore-scripts
+      # Sets the version, publishes to npm (prepublishOnly rebuilds with that version), tags it and writes the GitHub release.
+      - run: npx --yes -p semantic-release@25.0.9 -p conventional-changelog-conventionalcommits@10.4.1 semantic-release
         env:
-          # Used only until trusted publishing is configured on npmjs.com; npm prefers OIDC when it is.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - if: steps.version.outputs.publish == 'true'
-        name: Tag and create the GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          git tag "v$VERSION"
-          git push origin "v$VERSION"
-          gh release create "v$VERSION" --title "v$VERSION" --generate-notes $([[ "$VERSION" == *-* ]] && echo --prerelease)
+          GITHUB_TOKEN: ${{ github.token }}
+          # Used only until trusted publishing is configured on npmjs.com.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

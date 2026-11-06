@@ -529,23 +529,9 @@ npm install
 npm run check      # typecheck, tests, build, publint and attw
 ```
 
-### Branches and releases
+### Releases
 
-- **`develop`** is the default branch. Feature and fix branches open PRs into it, and CI runs on every PR and push.
-- **`master`** is production. Only release PRs from `develop` are merged into it, and every push to `master` runs the release workflow.
-
-To release:
-
-1. On `develop`, bump the version and update `CHANGELOG.md`:
-   ```bash
-   npm version minor --no-git-tag-version   # or patch, major, or prerelease --preid beta
-   ```
-2. Open a PR from `develop` into `master` and merge it once CI passes.
-3. The release workflow publishes the new version to npm with provenance, tags it `vX.Y.Z` and creates a GitHub release with generated notes. Prerelease versions such as `0.2.0-beta.1` go to the `next` dist tag. If the version is already on npm, the workflow does nothing, so merges without a version bump are safe.
-
-The release job runs in a GitHub environment named `npm`, so you can restrict it to `master` or require an approval in the repo settings.
-
-Publishing from your machine also works: `npm publish` runs the full check first through `prepublishOnly`.
+Merging into `master` releases automatically. Commit messages follow [Conventional Commits](https://www.conventionalcommits.org) and decide the version: `fix:` is a patch, `feat:` a minor, and `feat!:` or a `BREAKING CHANGE:` footer a major. Release notes are on [GitHub Releases](https://github.com/ansh-devs/zoho-books-sdk/releases).
 
 See [PLAN.md](./PLAN.md) for the research, design decisions and roadmap.
 
