@@ -1,9 +1,9 @@
-# zoho-books-sdk
+# @ansh-devs/zoho-books-sdk
 
 Type-safe, zero-dependency **Node.js SDK for the Zoho Books API v3**, with first-class **India GST** and **e-invoicing (IRN)** support.
 
 ```bash
-npm install zoho-books-sdk
+npm install @ansh-devs/zoho-books-sdk
 ```
 
 > Unofficial. Not affiliated with or endorsed by Zoho Corporation. "Zoho" and "Zoho Books" are trademarks of their respective owner.
@@ -24,7 +24,7 @@ npm install zoho-books-sdk
 ## Quick start
 
 ```ts
-import { ZohoBooks } from 'zoho-books-sdk';
+import { ZohoBooks } from '@ansh-devs/zoho-books-sdk';
 
 const books = new ZohoBooks({
   dataCenter: 'in',                         // us | eu | in | au | jp | ca | cn | sa | ae | uk
@@ -58,7 +58,7 @@ const books = ZohoBooks.fromEnv();
 2. Send the user to the consent URL, then exchange the code:
 
 ```ts
-import { ZohoOAuth, Scopes } from 'zoho-books-sdk';
+import { ZohoOAuth, Scopes } from '@ansh-devs/zoho-books-sdk';
 
 const oauth = new ZohoOAuth({ clientId, clientSecret, dataCenter: 'in' });
 
@@ -133,10 +133,10 @@ Prefer to see the payload before sending? Use `books.gst.prepareInvoice(...)`. I
 
 ### Pure GST utilities (no network)
 
-These also work in the browser through the `zoho-books-sdk/gst` sub-path:
+These also work in the browser through the `@ansh-devs/zoho-books-sdk/gst` sub-path:
 
 ```ts
-import { parseGstin, validateHsnOrSac, computeGst, determineSupplyType, toPlaceOfSupply, validateBillingProfile, toZohoDate } from 'zoho-books-sdk/gst';
+import { parseGstin, validateHsnOrSac, computeGst, determineSupplyType, toPlaceOfSupply, validateBillingProfile, toZohoDate } from '@ansh-devs/zoho-books-sdk/gst';
 
 parseGstin('27AAPFU0939F1ZV');
 // { valid: true, state: { code: 'MH', name: 'Maharashtra', ... }, pan: 'AAPFU0939F', kind: 'regular' }
@@ -160,7 +160,7 @@ Always date invoices and payments with `toZohoDate`. A UTC date puts payments ma
 await books.invoices.einvoice.push(invoiceId);          // generate the IRN on the IRP
 const e = await books.invoices.einvoice.get(invoiceId); // IRN, ack no/date, signed QR
 
-import { canCancelIrn } from 'zoho-books-sdk/gst';
+import { canCancelIrn } from '@ansh-devs/zoho-books-sdk/gst';
 if (canCancelIrn(e.ack_date)) {
   await books.invoices.einvoice.cancel(invoiceId, { reason: '2', remarks: 'Data entry mistake' });
 } else {
@@ -181,7 +181,7 @@ On an e-invoicing org, Zoho refuses to email a B2B invoice until it has been pus
 `InvoiceWorkflow` runs the whole flow for one paid order: contact, invoice, payment, IRP push and email. It saves Zoho's ids after every step, so a crash resumes instead of creating duplicates.
 
 ```ts
-import { InvoiceWorkflow, nextRetryAt } from 'zoho-books-sdk';
+import { InvoiceWorkflow, nextRetryAt } from '@ansh-devs/zoho-books-sdk';
 
 const workflow = new InvoiceWorkflow(books, {
   einvoicing: true,                         // push B2B invoices to the IRP before emailing
@@ -241,7 +241,7 @@ const recent = await books.contacts.listAll({ sort_column: 'created_time', sort_
 ## Errors
 
 ```ts
-import { ZohoRateLimitError, ZohoValidationError, ZohoNotFoundError, ZohoGstError } from 'zoho-books-sdk';
+import { ZohoRateLimitError, ZohoValidationError, ZohoNotFoundError, ZohoGstError } from '@ansh-devs/zoho-books-sdk';
 
 try {
   await books.invoices.create(data);
@@ -273,7 +273,7 @@ All of them extend `ZohoBooksError` and carry `status`, `code`, `method`, `path`
 Prefer results to exceptions in a job runner? Wrap any call in `settle`:
 
 ```ts
-import { settle } from 'zoho-books-sdk';
+import { settle } from '@ansh-devs/zoho-books-sdk';
 
 const res = await settle(books.invoices.get(id));
 if (!res.success) console.log(res.code); // NETWORK, RATE_LIMITED, UNAUTHORIZED, INVALID_CREDENTIALS, ZOHO_1002, ZOHO_NO_ID, ...
@@ -308,7 +308,7 @@ await books.invoices.upsertByCustomField('cf_order_id', 'ORD-1042', invoiceData,
 Zoho allows only **10 access tokens per 10 minutes, and 15 active, per refresh token**, so several processes starting together can lock you out. Within a single process the SDK never refreshes twice at once. Across replicas, share the token through a cache with `cacheTokenStore`. One process takes a lock (SET NX EX, 30 s) and refreshes. The others wait, then reuse its token, and refresh themselves if the holder failed. If the cache is down, the SDK refreshes anyway rather than stopping.
 
 ```ts
-import { cacheTokenStore } from 'zoho-books-sdk';
+import { cacheTokenStore } from '@ansh-devs/zoho-books-sdk';
 
 const tokenStore = cacheTokenStore({
   get: (k) => redis.get(k),
@@ -335,7 +335,7 @@ A one off call can also pass `{ organizationId }` in its options. That call uses
 
 ```ts
 import express from 'express';
-import { verifyWebhookSignature } from 'zoho-books-sdk';
+import { verifyWebhookSignature } from '@ansh-devs/zoho-books-sdk';
 
 app.post('/zoho/webhook', express.raw({ type: '*/*' }), (req, res) => {
   const ok = verifyWebhookSignature({

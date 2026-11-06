@@ -2,7 +2,7 @@
 
 A production-grade, type-safe Node.js SDK for the **Zoho Books API v3**, with
 first-class **India GST / e-invoicing** support, published to npm as
-[`zoho-books-sdk`](https://www.npmjs.com/package/zoho-books-sdk).
+[`@ansh-devs/zoho-books-sdk`](https://www.npmjs.com/package/@ansh-devs/zoho-books-sdk).
 
 This document records the research behind the SDK, the design decisions, what
 v0.1 ships, and the roadmap.
@@ -87,7 +87,7 @@ ZohoBooks (client.ts)
 ├── resources/       BaseResource → CrudResource → DocumentResource (pdf, email, comments,
 │                    attachments, approvals, addresses, upsert, bulk delete)
 │                    InvoicesResource (+ EInvoiceApi), sales, purchases, accounting, settings
-├── gst/             (pure, also exported as `zoho-books-sdk/gst`)
+├── gst/             (pure, also exported as `@ansh-devs/zoho-books-sdk/gst`)
 │                    states, GSTIN/HSN validation, supply type, computeGst, GstTaxResolver, IRN window
 ├── gst-helper.ts    GstInvoiceHelper: books.gst.createInvoice({ gstRate }) → correct tax ids
 ├── webhooks.ts      verifyWebhookSignature / computeWebhookSignature
@@ -118,14 +118,14 @@ ZohoBooks (client.ts)
 | Version | Scope |
 |---|---|
 | 0.2 | Codegen raw request/response types from the official OpenAPI bundle (merged, with enum corrections), kept in CI against the spec hash; typed wrappers for remaining modules (custom modules, fixed assets, reporting tags, price lists, purchase returns, self-billed invoices, bank rules, base-currency adjustments, opening balances, transaction locking) |
-| 0.3 | `zoho-books-sdk/testing`: fakes and fixtures; a contract-test suite runnable against a real Zoho sandbox org (opt-in via env); verify the undocumented `gst_treatment` values and state codes (`OD`/`OR`, `TS`, `UK`, `LA`) against a live India org |
+| 0.3 | `@ansh-devs/zoho-books-sdk/testing`: fakes and fixtures; a contract-test suite runnable against a real Zoho sandbox org (opt-in via env); verify the undocumented `gst_treatment` values and state codes (`OD`/`OR`, `TS`, `UK`, `LA`) against a live India org |
 | 0.4 | Redis `TokenStore` + lock recipe package; OpenTelemetry hooks; `Idempotency` helper (look up by `reference_number` / custom field before create); daily-quota budget tracker |
-| 0.5 | E-invoice payload builder/validator mirroring NIC IRP schema; webhook payload types per module; CLI (`npx zoho-books-sdk auth` to mint a refresh token) |
+| 0.5 | E-invoice payload builder/validator mirroring NIC IRP schema; webhook payload types per module; CLI (`npx @ansh-devs/zoho-books-sdk auth` to mint a refresh token) |
 | 1.0 | API freeze, docs site (TypeDoc), semantic-release with npm provenance |
 
 ## 7. Publishing to npm
 
-- Package name `zoho-books-sdk` (unscoped, available at time of writing). Clearly marked **unofficial** in the README.
+- Published as `@ansh-devs/zoho-books-sdk`. npm refused the unscoped `zoho-books-sdk` as too similar to the existing `zohobooks-sdk`. Clearly marked **unofficial** in the README.
 - `npm run check` = typecheck + tests + build + `publint` + `attw`; it runs automatically on `prepublishOnly`.
 - Releases are automated with semantic-release: merging `develop` into `master` versions from Conventional Commits, publishes to npm with provenance, tags and writes the GitHub release.
 - SemVer; release notes on GitHub Releases.
