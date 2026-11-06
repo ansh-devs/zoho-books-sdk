@@ -1,5 +1,8 @@
 # @ansh-devs/zoho-books-sdk
 
+[![npm version](https://img.shields.io/npm/v/@ansh-devs/zoho-books-sdk)](https://www.npmjs.com/package/@ansh-devs/zoho-books-sdk)
+[![CI](https://img.shields.io/github/actions/workflow/status/ansh-devs/zoho-books-sdk/ci.yml?branch=master&event=push&label=CI)](https://github.com/ansh-devs/zoho-books-sdk/actions/workflows/ci.yml?query=branch%3Amaster)
+
 Type-safe, zero-dependency **Node.js SDK for the Zoho Books API v3**, with first-class **India GST** and **e-invoicing (IRN)** support.
 
 ```bash
