@@ -16,6 +16,7 @@ npm install zoho-books-sdk
 - **Paid-order workflow:** contact, invoice, payment, IRP push and email in one resumable call, with holds for anything that shouldn't be invoiced automatically
 - **Files:** PDF download (single and bulk), attachments, receipts
 - **Webhooks:** `verifyWebhookSignature()` for `X-Zoho-Webhook-Signature`
+- **Logging:** structured JSON out of the box, with redaction, levels per area and stable event names. Bring Pino, Winston or any logger
 - **Packaging:** dual ESM/CJS with full `.d.ts`; Node ≥ 18.17; no runtime dependencies
 
 ---
@@ -387,18 +388,129 @@ const dashboard = await books.request({ method: 'GET', path: '/invoices/dashboar
 const file = await books.request({ method: 'GET', path: '/invoices/print', query: { invoice_ids: '1,2' }, responseType: 'binary' });
 ```
 
-## Observability
+## Logging
+
+The SDK logs structured events out of the box, with no dependency. Plug in your own logger and its events flow there instead.
+
+```ts
+new ZohoBooks({ ... });                                    // built-in JSON logger on stderr, warn and above
+new ZohoBooks({ ..., logger: pino() });                    // your Pino, detected automatically, follows its level
+new ZohoBooks({ ..., logger: winston.createLogger(...) }); // Winston, console, or anything with debug/info/warn/error
+new ZohoBooks({ ..., logger: false });                     // silent
+```
+
+The built-in logger writes one JSON object per line in Pino's format (`level` 10 to 50, `time`, `pid`, `hostname`, `name`, `msg`, then the event's fields), so moving to real Pino later changes nothing downstream. Set `format: 'pretty'`, or `ZOHO_BOOKS_LOG_FORMAT=pretty`, for readable lines while developing.
+
+**Recommended pairing for production: Pino.** It is several times faster than Winston and writes JSON natively.
+
+### Options
+
+```ts
+new ZohoBooks({
+  ...,
+  logging: {
+    level: 'info',                          // default: ZOHO_BOOKS_LOG_LEVEL, else your logger's level, else 'warn'
+    levels: { http: 'debug', auth: 'info' },// per category: http, auth, gst, workflow
+    redact: { pii: true, keys: ['notes'] }, // pii masks GSTIN, PAN, email, phone (default on); keys hides extra fields
+    bodies: 'errors',                       // 'none' (default), 'errors' or 'all'; always redacted
+    maxBodyLength: 2000,
+    context: () => ({ traceId: trace.getActiveSpan()?.spanContext().traceId }),
+    format: 'json',                         // built-in logger only: 'json' or 'pretty'
+    destination: process.stdout,            // built-in logger only, default process.stderr
+  },
+});
+```
+
+- **Secrets are always hidden** and this can't be turned off: access and refresh tokens, `Authorization` headers and client secrets.
+- **PII is masked by default** (`27***ZV`, `ra***om`): GSTIN, PAN, email, phone and email recipient lists, including inside query filters and bodies.
+- **Bodies are off by default**, because they contain customer data.
+- **A logger that throws never breaks an API call**, and fields for disabled levels are never built.
+- **Every API call has a `requestId`**, kept across its retries, so one call's lines group together.
+
+### What you'll see by default (warn and above)
+
+Successful calls are silent. These are real lines from the built-in logger; `time`, `pid` and `hostname` are left out for brevity.
+
+`books.invoices.get('460000000099999')`, which returns 404 with Zoho code 1002:
+```json
+{"level":40,"name":"zoho-books-sdk","msg":"Invoice does not exist. [code 1002] (GET /invoices/460000000099999)","event":"zoho.request.failed","category":"http","requestId":"509656d2","method":"GET","path":"/invoices/460000000099999","organizationId":"600000001","status":404,"code":1002,"error":"ZohoNotFoundError","zohoMessage":"Invoice does not exist.","attempts":1,"durationMs":0}
+```
+
+`books.contacts.list()`, which gets a 503 and then succeeds on retry:
+```json
+{"level":40,"name":"zoho-books-sdk","msg":"HTTP 503; retrying in 1 ms (attempt 1)","event":"zoho.request.retry","category":"http","requestId":"ca25d103","method":"GET","path":"/contacts","organizationId":"600000001","attempt":1,"delayMs":1,"status":503,"code":1000,"error":"ZohoServerError"}
+```
+
+`books.invoices.list()` hitting the per-minute limit:
+```json
+{"level":40,"name":"zoho-books-sdk","msg":"Zoho minute rate limit hit; retrying in 60000 ms","event":"zoho.request.rate_limited","category":"http","requestId":"6c5fccab","method":"GET","path":"/invoices","organizationId":"600000001","attempt":1,"delayMs":60000,"status":429,"code":44,"error":"ZohoRateLimitError","kind":"minute"}
+```
+
+`books.invoices.create(...)` getting a 500, which is an error and is not retried, so no duplicate invoice:
+```json
+{"level":50,"name":"zoho-books-sdk","msg":"Internal Server Error [code 1000] (POST /invoices)","event":"zoho.request.failed","category":"http","requestId":"8e5116ea","method":"POST","path":"/invoices","organizationId":"600000001","status":500,"code":1000,"error":"ZohoServerError","zohoMessage":"Internal Server Error","attempts":1,"durationMs":0}
+```
+
+The first call with a wrong client secret:
+```json
+{"level":50,"name":"zoho-books-sdk","msg":"Zoho OAuth token request failed: invalid_client (wrong client id or secret, or Multi DC is not enabled for this data center in the Zoho API console)","event":"zoho.token.refresh_failed","category":"auth","oauthError":"invalid_client","status":200,"durationMs":2}
+```
+
+`InvoiceWorkflow.run()` for a USD order:
+```json
+{"level":40,"name":"zoho-books-sdk","msg":"Currency USD is not INR","event":"zoho.workflow.held","category":"workflow","organizationId":"600000001","reference":"ORD-1042"}
+```
+
+At `info`, token refreshes and each workflow step appear too:
+```json
+{"level":30,"name":"zoho-books-sdk","msg":"payment recorded","event":"zoho.workflow.step","category":"workflow","organizationId":"600000001","reference":"ORD-1042","step":"payment","action":"recorded","paymentId":"460000000054321","amount":1180}
+```
+
+At `debug`, every completed request appears with its duration. In `pretty` format:
+```
+2026-11-06T15:38:12.579Z DEBUG zoho.request.completed GET /contacts 200 requestId=4c8b10f6 method=GET path=/contacts organizationId=600000001 status=200 attempt=2 durationMs=0
+```
+
+### Events
+
+| Event | Level | When |
+|---|---|---|
+| `zoho.request.started` | trace | Each attempt starts (with the request body when `bodies` is `all`) |
+| `zoho.request.completed` | debug | A call succeeded, with status and duration |
+| `zoho.request.throttled` | debug | A call waited 1 s or more for the rate limiter |
+| `zoho.request.retry` | warn | A 5xx, network error or timeout will be retried |
+| `zoho.request.rate_limited` | warn, error for the daily quota | Zoho returned 429, with `kind`: minute, daily or concurrency |
+| `zoho.request.failed` | warn for 4xx, error for 5xx, network, 401 and 403 | A call failed and will not be retried |
+| `zoho.request.aborted` | debug | Your `AbortSignal` cancelled a call |
+| `zoho.token.refreshed` | info | A new access token was minted |
+| `zoho.token.refresh_failed` | error | The token endpoint refused, with `oauthError` |
+| `zoho.token.rejected` | warn | Zoho returned 401; the SDK refreshes and retries once |
+| `zoho.token.cache_unavailable` | warn | The token cache failed; the SDK continues without it |
+| `zoho.api_domain.switched` | info | The SDK moved to the API host Zoho reported with the token |
+| `zoho.gst.prepared` | debug | A GST invoice payload was built, with supply type and place of supply |
+| `zoho.gst.rejected` | warn | GST validation refused a document before any request |
+| `zoho.gst.taxes_reloaded` | info | A rate was missing from the cached taxes |
+| `zoho.workflow.step` | info | contact, invoice, payment, einvoice or email: created, adopted, resumed, recorded, skipped, pushed or sent |
+| `zoho.workflow.done` | info | An order is fully invoiced |
+| `zoho.workflow.held` | warn | An order needs a person |
+| `zoho.workflow.review` | error | Zoho's total differs from the captured amount; nothing was recorded |
+| `zoho.workflow.retry` / `rate_limited` | warn | A step failed or hit Zoho's limit |
+| `zoho.einvoice.push_failed` | warn | The IRP push was refused |
+| `zoho.einvoice.already_registered` | info | The push was refused but the email went through |
+
+You can log your own events in the same format with `books.log`, for example `books.log.info('workflow', 'app.order.synced', 'Synced', { orderId })`.
+
+### Metrics hooks
+
+For metrics rather than logs, use `hooks`:
 
 ```ts
 new ZohoBooks({
   ...,
   hooks: {
-    onRequest: ({ method, url, attempt }) => {},
     onResponse: ({ status, durationMs }) => metrics.histogram('zoho.latency', durationMs, { status }),
-    onRetry: ({ attempt, delayMs, error }) => log.warn('zoho retry', { attempt, delayMs, error }),
+    onRetry: ({ attempt }) => metrics.increment('zoho.retries', { attempt }),
   },
-  logger: console,                       // any { debug, warn }
-  onTokenRefreshed: (t) => log.info('zoho token refreshed', { expiresAt: t.expiresAt }),
 });
 ```
 

@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { ZohoOAuthError } from '../errors.js';
+import { SdkLogger } from '../logging/logger.js';
 import { ZohoOAuth, type OAuthClientOptions, type TokenResponse } from './oauth.js';
 import { MemoryTokenStore, type StoredToken, type TokenStore } from './token-store.js';
 
@@ -34,6 +36,8 @@ interface CachingOptions {
   refreshSkewMs?: number;
   /** Called after each new access token. */
   onTokenRefreshed?: (token: StoredToken) => void;
+  /** SDK logger for refresh and cache events. Silent when omitted. */
+  log?: SdkLogger;
 }
 
 /** Caches tokens and shares one refresh between concurrent callers, since Zoho allows 10 tokens per 10 minutes. */
@@ -44,6 +48,7 @@ abstract class CachingTokenAuth implements AuthProvider {
   private readonly onTokenRefreshed: ((token: StoredToken) => void) | undefined;
   private inflight: Promise<StoredToken> | undefined;
   private apiDomain: string | undefined;
+  private readonly log: SdkLogger;
   /** @internal test clock */
   now: () => number = Date.now;
 
@@ -54,6 +59,15 @@ abstract class CachingTokenAuth implements AuthProvider {
       `zoho-books:${createHash('sha256').update(defaultKeyMaterial).digest('hex').slice(0, 24)}`;
     this.skewMs = options.refreshSkewMs ?? 5 * 60_000;
     this.onTokenRefreshed = options.onTokenRefreshed;
+    this.log = options.log ?? SdkLogger.silent();
+  }
+
+  /** Report a cache failure. The SDK keeps going without the cache. */
+  private cacheFailed(operation: string, error: unknown): void {
+    this.log.warn('auth', 'zoho.token.cache_unavailable', `Token cache ${operation} failed; continuing without the cache`, {
+      operation,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   protected abstract mint(): Promise<TokenResponse>;
@@ -62,7 +76,8 @@ abstract class CachingTokenAuth implements AuthProvider {
   private async cached(): Promise<StoredToken | undefined> {
     try {
       return await this.store.get(this.key);
-    } catch {
+    } catch (error) {
+      this.cacheFailed('read', error);
       return undefined;
     }
   }
@@ -82,7 +97,9 @@ abstract class CachingTokenAuth implements AuthProvider {
 
   async invalidate(token: string): Promise<boolean> {
     const cached = await this.cached();
-    if (!cached || cached.accessToken === token) await Promise.resolve(this.store.delete(this.key)).catch(() => undefined);
+    if (!cached || cached.accessToken === token) {
+      await Promise.resolve(this.store.delete(this.key)).catch((error: unknown) => this.cacheFailed('delete', error));
+    }
     return true;
   }
 
@@ -102,14 +119,30 @@ abstract class CachingTokenAuth implements AuthProvider {
       const cached = await this.cached();
       if (cached && cached.expiresAt - this.skewMs > this.now()) return cached;
 
-      const res = await this.mint();
+      const started = Date.now();
+      let res: TokenResponse;
+      try {
+        res = await this.mint();
+      } catch (error) {
+        this.log.error('auth', 'zoho.token.refresh_failed', error instanceof Error ? error.message : String(error), {
+          oauthError: error instanceof ZohoOAuthError ? error.oauthError : undefined,
+          status: error instanceof ZohoOAuthError ? error.status : undefined,
+          durationMs: Date.now() - started,
+        });
+        throw error;
+      }
       const token: StoredToken = {
         accessToken: res.access_token,
         expiresAt: this.now() + (res.expires_in ?? 3600) * 1000,
         apiDomain: res.api_domain,
         scope: res.scope,
       };
-      await Promise.resolve(this.store.set(this.key, token)).catch(() => undefined);
+      await Promise.resolve(this.store.set(this.key, token)).catch((error: unknown) => this.cacheFailed('write', error));
+      this.log.info('auth', 'zoho.token.refreshed', 'Refreshed the Zoho access token', {
+        expiresAt: new Date(token.expiresAt).toISOString(),
+        apiDomain: token.apiDomain,
+        durationMs: Date.now() - started,
+      });
       this.onTokenRefreshed?.(token);
       return token;
     };
@@ -124,6 +157,7 @@ abstract class CachingTokenAuth implements AuthProvider {
     } catch (error) {
       // The lock itself failed, e.g. the cache is down. Refresh without it rather than stop.
       if (ran) throw error;
+      this.cacheFailed('lock', error);
       token = await run();
     }
     this.apiDomain = token.apiDomain ?? this.apiDomain;

@@ -52,7 +52,6 @@ export type {
   CallOptions,
   BinaryResponse,
   Hooks,
-  Logger,
   RequestEvent,
   ResponseEvent,
   RetryEvent,
@@ -96,6 +95,20 @@ export {
 } from './gst-helper.js';
 export * from './gst/index.js';
 
+export {
+  createSdkLogger,
+  fromPino,
+  isPinoLike,
+  SdkLogger,
+  type ZohoLogger,
+  type PinoLike,
+  type LogLevel,
+  type LogCategory,
+  type LogFields,
+  type LoggingOptions,
+} from './logging/logger.js';
+export { createConsoleLogger, type ConsoleLoggerOptions } from './logging/console-logger.js';
+export { redact, maskValue, REDACTED, type RedactOptions } from './logging/redact.js';
 export { settle, resultCode, type Result, type ResultCode } from './result.js';
 export {
   InvoiceWorkflow,

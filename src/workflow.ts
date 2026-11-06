@@ -2,7 +2,7 @@ import type { ZohoBooks } from './client.js';
 import { ZohoConfigError, ZohoGstError, ZohoNoRecordError, ZohoRateLimitError } from './errors.js';
 import { gstTreatmentOf, toZohoDate, validateBillingProfile, type BillingProfile } from './gst/profile.js';
 import { findState, toPlaceOfSupply } from './gst/states.js';
-import { settle } from './result.js';
+import { resultCode, settle } from './result.js';
 import type { Contact, ContactInput, Invoice } from './types/models.js';
 
 export interface InvoiceLine {
@@ -130,30 +130,49 @@ export class InvoiceWorkflow {
   async run(order: InvoiceOrder, saved: WorkflowState = {}): Promise<WorkflowOutcome> {
     const state: WorkflowState = { ...saved };
     const save = () => this.options.save({ ...state });
+    const log = this.books.log;
+    const at = (fields: Record<string, unknown> = {}) => ({ organizationId: this.books.organizationId, reference: order.reference, ...fields });
+    const step = (name: string, action: string, fields: Record<string, unknown> = {}) =>
+      log.info('workflow', 'zoho.workflow.step', `${name} ${action}`, at({ step: name, action, ...fields }));
+    const finish = (outcome: WorkflowOutcome): WorkflowOutcome => {
+      const ids = { contactId: state.contactId, invoiceId: state.invoiceId, paymentId: state.paymentId };
+      if (outcome.status === 'done') log.info('workflow', 'zoho.workflow.done', 'Order invoiced', at(ids));
+      else if (outcome.status === 'held') log.warn('workflow', 'zoho.workflow.held', outcome.reason, at(ids));
+      else if (outcome.status === 'review') log.error('workflow', 'zoho.workflow.review', outcome.reason, at(ids));
+      else if (outcome.status === 'rate_limited') log.warn('workflow', 'zoho.workflow.rate_limited', 'Zoho rate limit; stop the batch', at(ids));
+      else if (outcome.status === 'retry') log.warn('workflow', 'zoho.workflow.retry', outcome.reason, at({ ...ids, code: resultCode(outcome.error) }));
+      return outcome;
+    };
+
     const hold = this.holdReason(order);
-    if (hold) return { status: 'held', reason: hold, state };
+    if (hold) return finish({ status: 'held', reason: hold, state });
 
     try {
       if (!state.contactId) {
-        state.contactId = await this.contact(order.profile);
+        const contact = await this.contact(order.profile);
+        state.contactId = contact.id;
         await save();
+        step('contact', contact.adopted ? 'adopted' : 'created', { contactId: contact.id });
       }
 
       let invoice: Invoice;
       if (state.invoiceId) {
         invoice = await this.books.invoices.get(state.invoiceId);
+        step('invoice', 'resumed', { invoiceId: state.invoiceId });
       } else {
-        invoice = (await this.books.invoices.findByReference(order.reference)) ?? (await this.createInvoice(order, state.contactId));
+        const existing = await this.books.invoices.findByReference(order.reference);
+        invoice = existing ?? (await this.createInvoice(order, state.contactId));
         if (!invoice.invoice_id) throw new ZohoNoRecordError('Zoho returned no invoice_id', { status: 200, body: invoice });
         state.invoiceId = invoice.invoice_id;
         await save();
+        step('invoice', existing ? 'adopted' : 'created', { invoiceId: invoice.invoice_id, total: invoice.total });
       }
 
       // Zoho rounds tax per line, so allow a small gap and settle at its figure. Never record money not received.
       const captured = order.capturedMinor / 100;
       const total = Number(invoice.total);
       if (!Number.isFinite(total) || Math.round(Math.abs(total - captured) * 100) > Math.round((this.options.tolerance ?? 0.05) * 100)) {
-        return { status: 'review', reason: `Zoho total ${invoice.total} differs from captured ${captured.toFixed(2)}`, state };
+        return finish({ status: 'review', reason: `Zoho total ${invoice.total} differs from captured ${captured.toFixed(2)}`, state });
       }
 
       if (!state.paymentId && invoice.status !== 'paid') {
@@ -169,22 +188,30 @@ export class InvoiceWorkflow {
         if (!payment.payment_id) throw new ZohoNoRecordError('Zoho returned no payment_id', { status: 200, body: payment });
         state.paymentId = payment.payment_id;
         await save();
+        step('payment', 'recorded', { paymentId: payment.payment_id, amount: total });
+      } else if (!state.paymentId) {
+        step('payment', 'skipped', { reason: 'invoice already paid' });
       }
 
       const email = order.profile.email;
       const b2b = gstTreatmentOf(order.profile) === 'business_gst';
       if (this.options.einvoicing && b2b && !state.einvoicePushed) {
         const pushed = await settle(this.books.invoices.einvoice.push(state.invoiceId));
-        if (!pushed.success) {
-          if (pushed.code === 'RATE_LIMITED') return { status: 'rate_limited', error: pushed.error, state };
+        if (pushed.success) {
+          step('einvoice', 'pushed');
+        } else {
+          if (pushed.code === 'RATE_LIMITED') return finish({ status: 'rate_limited', error: pushed.error, state });
+          log.warn('workflow', 'zoho.einvoice.push_failed', pushed.error.message, at({ invoiceId: state.invoiceId, code: pushed.code }));
           // Zoho refuses a second push. If the email goes through, the invoice was already registered.
-          if (!email) return { status: 'retry', reason: 'IRP push failed', error: pushed.error, state };
+          if (!email) return finish({ status: 'retry', reason: 'IRP push failed', error: pushed.error, state });
           const sent = await settle(this.books.invoices.email(state.invoiceId, { to_mail_ids: [email] }));
           if (!sent.success) {
-            if (sent.code === 'RATE_LIMITED') return { status: 'rate_limited', error: sent.error, state };
-            return { status: 'retry', reason: 'IRP push failed', error: pushed.error, state };
+            if (sent.code === 'RATE_LIMITED') return finish({ status: 'rate_limited', error: sent.error, state });
+            return finish({ status: 'retry', reason: 'IRP push failed', error: pushed.error, state });
           }
+          log.info('workflow', 'zoho.einvoice.already_registered', 'Push was refused but the email went through, so the invoice is registered', at({ invoiceId: state.invoiceId }));
           state.emailed = true;
+          step('email', 'sent');
         }
         state.einvoicePushed = true;
         await save();
@@ -194,24 +221,25 @@ export class InvoiceWorkflow {
         await this.books.invoices.email(state.invoiceId, { to_mail_ids: [email] });
         state.emailed = true;
         await save();
+        step('email', 'sent');
       }
-      return { status: 'done', state };
+      return finish({ status: 'done', state });
     } catch (error) {
-      if (error instanceof ZohoRateLimitError) return { status: 'rate_limited', error, state };
-      if (error instanceof ZohoGstError || error instanceof ZohoConfigError) return { status: 'held', reason: error.message, state };
-      return { status: 'retry', reason: error instanceof Error ? error.message : String(error), error, state };
+      if (error instanceof ZohoRateLimitError) return finish({ status: 'rate_limited', error, state });
+      if (error instanceof ZohoGstError || error instanceof ZohoConfigError) return finish({ status: 'held', reason: error.message, state });
+      return finish({ status: 'retry', reason: error instanceof Error ? error.message : String(error), error, state });
     }
   }
 
   /** Reuse a contact found by email, updated with the current GST details, or create one. */
-  private async contact(profile: BillingProfile): Promise<string> {
+  private async contact(profile: BillingProfile): Promise<{ id: string; adopted: boolean }> {
     const fields = contactFromProfile(profile);
     // A system generated consumer must not adopt a contact an accountant may have set up with a GSTIN.
     if (profile.email && !profile.systemGenerated) {
       const existing = await this.books.contacts.findByEmail(profile.email);
       if (existing) {
         await this.books.contacts.update(existing.contact_id, fields);
-        return existing.contact_id;
+        return { id: existing.contact_id, adopted: true };
       }
     }
     const created = await this.books.contacts.create({
@@ -219,7 +247,7 @@ export class InvoiceWorkflow {
       ...(profile.email ? { contact_persons: [{ first_name: profile.legalName, email: profile.email, is_primary_contact: true }] } : {}),
     });
     if (!created.contact_id) throw new ZohoNoRecordError('Zoho returned no contact_id', { status: 200, body: created });
-    return created.contact_id;
+    return { id: created.contact_id, adopted: false };
   }
 
   private async createInvoice(order: InvoiceOrder, contactId: string): Promise<Invoice> {
