@@ -64,8 +64,3 @@ export interface Hooks {
   onResponse?: (event: ResponseEvent) => void;
   onRetry?: (event: RetryEvent) => void;
 }
-
-export interface Logger {
-  debug(message: string, meta?: Record<string, unknown>): void;
-  warn(message: string, meta?: Record<string, unknown>): void;
-}

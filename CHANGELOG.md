@@ -24,6 +24,14 @@ All notable changes to this project are documented here. This project follows [S
 - `invoices.findByReference()` and `contacts.findByEmail()` adopt exact matches only.
 - `validateBillingProfile()`, `gstTreatmentOf()`, `toZohoDate()` (India time), `isRetiredStateCode()`, `books.testConnection()`.
 
+### Logging
+- Built in structured logger with no dependency: Pino compatible JSON on stderr, or pretty lines. Default level warn, set by `logging.level`, `ZOHO_BOOKS_LOG_LEVEL` or your logger's own level.
+- Bring any logger: Pino and Bunyan detected automatically, Winston and console work as is, `false` for silence.
+- Secrets always hidden; GSTIN, PAN, email and phone masked by default; extra keys configurable; bodies off by default.
+- Levels per category (http, auth, gst, workflow), a context hook for trace ids, request ids kept across retries, and a logger that throws never breaks a call.
+- Stable event names for requests, retries, rate limits, token refresh, GST validation, the workflow and the IRP push.
+- The `logger` option replaces the earlier minimal `{ debug, warn }` logger.
+
 ### Changed before first release
 - Andhra Pradesh uses Zoho's code `AD`. Retired prefixes 25 and 28 and code `DD` are refused for new data, but accepted on old GSTINs.
 - Intra state CGST plus SGST groups are sent in `tax_group_id`; IGST stays in `tax_id`. `GstTaxResolver.resolve` returns `{ id, field }`.

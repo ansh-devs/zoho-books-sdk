@@ -1,14 +1,17 @@
+import { randomUUID } from 'node:crypto';
 import type { AuthProvider } from '../auth/providers.js';
 import {
   ZohoBooksError,
   ZohoConfigError,
   ZohoNetworkError,
+  ZohoOAuthError,
   ZohoRateLimitError,
   ZohoTimeoutError,
   errorFromResponse,
 } from '../errors.js';
+import { SdkLogger, type LogFields } from '../logging/logger.js';
 import { RateLimiter, type RateLimiterOptions } from './rate-limiter.js';
-import type { BinaryResponse, FetchLike, Hooks, Logger, Query, RequestOptions } from './types.js';
+import type { BinaryResponse, FetchLike, Hooks, Query, RequestOptions } from './types.js';
 
 declare const __SDK_VERSION__: string;
 
@@ -37,7 +40,8 @@ export interface HttpClientOptions {
   /** Switch to the api_domain Zoho returns with each token. Only zohoapis hosts are accepted. */
   followTokenApiDomain?: boolean | undefined;
   hooks?: Hooks | undefined;
-  logger?: Logger | undefined;
+  /** SDK logger. Silent when omitted. */
+  log?: SdkLogger | undefined;
 }
 
 export const SDK_VERSION: string = typeof __SDK_VERSION__ === 'string' ? __SDK_VERSION__ : 'dev';
@@ -72,7 +76,7 @@ export class HttpClient {
   private readonly limiter: RateLimiter | undefined;
   private readonly userAgent: string;
   private readonly hooks: Hooks;
-  private readonly logger: Logger | undefined;
+  private readonly log: SdkLogger;
   private readonly followTokenApiDomain: boolean;
   /** @internal replaceable in tests */
   sleep: (ms: number, signal?: AbortSignal) => Promise<void> = abortableSleep;
@@ -96,7 +100,7 @@ export class HttpClient {
     this.limiter = options.rateLimit === false ? undefined : new RateLimiter(options.rateLimit ?? {});
     this.userAgent = options.userAgent ?? `zoho-books-sdk-node/${SDK_VERSION}`;
     this.hooks = options.hooks ?? {};
-    this.logger = options.logger;
+    this.log = options.log ?? SdkLogger.silent();
     this.followTokenApiDomain = options.followTokenApiDomain ?? false;
   }
 
@@ -105,17 +109,43 @@ export class HttpClient {
   async request(options: RequestOptions & { responseType: 'binary' }): Promise<BinaryResponse>;
   async request(options: RequestOptions): Promise<unknown> {
     const canRetryAll = options.idempotent ?? RETRYABLE_METHODS.has(options.method);
+    const requestId = randomUUID().slice(0, 8);
+    const startedAt = Date.now();
+    const base = (): LogFields => ({
+      requestId,
+      method: options.method,
+      path: options.path,
+      organizationId: options.organizationId || this.organizationId,
+      ...(options.query ? { query: options.query } : {}),
+    });
 
     let authRetried = false;
     for (let attempt = 1; ; attempt++) {
       try {
-        const run = () => this.once(options, attempt);
+        const queuedAt = Date.now();
+        const run = () => {
+          const waitMs = Date.now() - queuedAt;
+          if (waitMs >= 1000) {
+            this.log.debug('http', 'zoho.request.throttled', `Waited ${waitMs} ms for the rate limiter`, () => ({ ...base(), waitMs }));
+          }
+          return this.once(options, attempt, base);
+        };
         return await (this.limiter ? this.limiter.schedule(run, options.signal) : run());
       } catch (error) {
-        if (!(error instanceof ZohoBooksError)) throw error;
+        if (!(error instanceof ZohoBooksError)) {
+          this.log.debug('http', 'zoho.request.aborted', 'Request aborted by the caller', base);
+          throw error;
+        }
+        // Token failures are logged once, by the auth provider.
+        if (error instanceof ZohoOAuthError) throw error;
 
         // Nothing was processed on 401, so one refresh and replay is safe for any method.
         if (error.status === 401 && !authRetried && this.auth.invalidate) {
+          this.log.warn('auth', 'zoho.token.rejected', 'Zoho rejected the access token; refreshing and retrying once', () => ({
+            ...base(),
+            status: 401,
+            code: error.code,
+          }));
           authRetried = true;
           if (await this.auth.invalidate(failedTokens.get(error) ?? '')) {
             attempt--;
@@ -126,7 +156,10 @@ export class HttpClient {
         // Zoho rejects 429s before processing, so they are retried for every method except the daily quota.
         const isRateLimit = error instanceof ZohoRateLimitError;
         const retryable = isRateLimit ? error.retryable : error.retryable && canRetryAll;
-        if (!retryable || attempt > this.retry.maxRetries || options.signal?.aborted) throw error;
+        if (!retryable || attempt > this.retry.maxRetries || options.signal?.aborted) {
+          this.logFailure(error, attempt, startedAt, base);
+          throw error;
+        }
 
         const delayMs = this.backoff(attempt, error);
         if (isRateLimit && error.kind !== 'concurrency') this.limiter?.pause(delayMs);
@@ -137,19 +170,40 @@ export class HttpClient {
           delayMs,
           error,
         });
-        this.logger?.warn('zoho-books: retrying request', {
-          method: options.method,
-          path: options.path,
-          attempt,
-          delayMs,
-          error: error.message,
-        });
+        const retryFields = () => ({ ...base(), attempt, delayMs, status: error.status, code: error.code, error: error.name });
+        if (isRateLimit) {
+          this.log.warn('http', 'zoho.request.rate_limited', `Zoho ${error.kind} rate limit hit; retrying in ${delayMs} ms`, () => ({
+            ...retryFields(),
+            kind: error.kind,
+          }));
+        } else {
+          const what = error.status ? `HTTP ${error.status}` : error.name;
+          this.log.warn('http', 'zoho.request.retry', `${what}; retrying in ${delayMs} ms (attempt ${attempt})`, retryFields);
+        }
         await this.sleep(delayMs, options.signal);
       }
     }
   }
 
-  private async once(options: RequestOptions, attempt: number): Promise<unknown> {
+  /** Log a request that will not be retried. Server, network and auth failures are errors; the rest are warnings. */
+  private logFailure(error: ZohoBooksError, attempts: number, startedAt: number, base: () => LogFields): void {
+    const isRateLimit = error instanceof ZohoRateLimitError;
+    const severe = error.status === 0 || error.status >= 500 || error.status === 401 || error.status === 403 || (isRateLimit && error.kind === 'daily');
+    const zohoMessage = error.body && typeof error.body === 'object' ? (error.body as { message?: unknown }).message : undefined;
+    this.log.log(severe ? 'error' : 'warn', 'http', isRateLimit ? 'zoho.request.rate_limited' : 'zoho.request.failed', error.message, () => ({
+      ...base(),
+      status: error.status,
+      code: error.code,
+      error: error.name,
+      ...(isRateLimit ? { kind: error.kind } : {}),
+      ...(zohoMessage !== undefined ? { zohoMessage } : {}),
+      attempts,
+      durationMs: Date.now() - startedAt,
+      ...(this.log.bodies !== 'none' && error.body !== undefined ? { responseBody: this.log.body(error.body) } : {}),
+    }));
+  }
+
+  private async once(options: RequestOptions, attempt: number, base: () => LogFields): Promise<unknown> {
     const token = await this.auth.getAccessToken();
     if (this.followTokenApiDomain) this.adoptApiDomain(this.auth.getApiDomain?.());
     const url = this.buildUrl(options.path, options.query, options.organizationId);
@@ -173,6 +227,11 @@ export class HttpClient {
     const signal = options.signal ? anySignal([options.signal, timeoutSignal]) : timeoutSignal;
 
     this.hooks.onRequest?.({ method: options.method, url, attempt });
+    this.log.trace('http', 'zoho.request.started', `${options.method} ${options.path}`, () => ({
+      ...base(),
+      attempt,
+      ...(this.log.bodies === 'all' && options.body !== undefined ? { requestBody: this.log.body(options.body) } : {}),
+    }));
     const started = Date.now();
     let res: Response;
     try {
@@ -195,13 +254,21 @@ export class HttpClient {
       });
     }
     this.hooks.onResponse?.({ method: options.method, url, attempt, status: res.status, durationMs: Date.now() - started });
-    this.logger?.debug('zoho-books: response', { method: options.method, path: options.path, status: res.status });
+    const completed = (extra: LogFields) =>
+      this.log.debug('http', 'zoho.request.completed', `${options.method} ${options.path} ${res.status}`, () => ({
+        ...base(),
+        status: res.status,
+        attempt,
+        durationMs: Date.now() - started,
+        ...extra,
+      }));
 
     const contentType = res.headers.get('content-type') ?? undefined;
     const isJson = contentType?.includes('json') ?? false;
 
     if (options.responseType === 'binary' && res.ok && !isJson) {
       const data = new Uint8Array(await res.arrayBuffer());
+      completed({ bytes: data.byteLength, contentType });
       return { data, contentType, filename: parseFilename(res.headers.get('content-disposition')) } satisfies BinaryResponse;
     }
 
@@ -238,6 +305,7 @@ export class HttpClient {
       failedTokens.set(err, token);
       throw err;
     }
+    completed(this.log.bodies === 'all' ? { responseBody: this.log.body(parsed) } : {});
     return parsed ?? {};
   }
 
@@ -266,7 +334,7 @@ export class HttpClient {
     if (!/^(www\.)?zohoapis\.[a-z.]+$/.test(host)) return;
     const next = `https://${host}/books/v3`;
     if (next !== this.baseUrl) {
-      this.logger?.debug('zoho-books: switching API host from token api_domain', { from: this.baseUrl, to: next });
+      this.log.info('auth', 'zoho.api_domain.switched', `Using API host ${next} from the token's api_domain`, { from: this.baseUrl, to: next });
       this.baseUrl = next;
     }
   }

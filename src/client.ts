@@ -5,7 +5,8 @@ import { ZohoConfigError } from './errors.js';
 import { GstInvoiceHelper, type GstHelperOptions } from './gst-helper.js';
 import { HttpClient, type RetryOptions } from './http/http-client.js';
 import type { RateLimiterOptions } from './http/rate-limiter.js';
-import type { BinaryResponse, CallOptions, FetchLike, Hooks, Logger, RequestOptions } from './http/types.js';
+import type { BinaryResponse, CallOptions, FetchLike, Hooks, RequestOptions } from './http/types.js';
+import { createSdkLogger, type LoggingOptions, type PinoLike, type SdkLogger, type ZohoLogger } from './logging/logger.js';
 import { BankAccountsResource, BankTransactionsResource, ChartOfAccountsResource, JournalsResource } from './resources/accounting.js';
 import { ContactsResource } from './resources/contacts.js';
 import { InvoicesResource } from './resources/invoices.js';
@@ -80,7 +81,10 @@ export interface ZohoBooksOptions {
   rateLimit?: RateLimiterOptions | false;
   fetch?: FetchLike;
   hooks?: Hooks;
-  logger?: Logger;
+  /** Pino, Winston, console or any logger with debug, info, warn and error. Omit for the built in JSON logger, false for none. */
+  logger?: ZohoLogger | PinoLike | false;
+  /** Levels, redaction, bodies and context for SDK logs. */
+  logging?: LoggingOptions;
   userAgent?: string;
 
   /** India GST helper settings. */
@@ -91,6 +95,8 @@ export interface ZohoBooksOptions {
 export class ZohoBooks {
   readonly http: HttpClient;
   readonly auth: AuthProvider;
+  /** The SDK's logger, for your own events in the same format. */
+  readonly log: SdkLogger;
   private readonly options: ZohoBooksOptions;
   private readonly orgClients = new Map<string, ZohoBooks>();
 
@@ -129,7 +135,8 @@ export class ZohoBooks {
 
   constructor(options: ZohoBooksOptions) {
     this.options = options;
-    this.auth = ZohoBooks.buildAuth(options);
+    this.log = createSdkLogger(options.logger, options.logging);
+    this.auth = ZohoBooks.buildAuth(options, this.log);
 
     const explicitHost = Boolean(options.baseUrl || options.apiDomain || options.dataCenter);
     const baseUrl =
@@ -144,7 +151,7 @@ export class ZohoBooks {
       retry: options.retry,
       rateLimit: options.rateLimit,
       hooks: options.hooks,
-      logger: options.logger,
+      log: this.log,
       userAgent: options.userAgent,
       // Trust the token's api_domain only when the caller pinned no host.
       followTokenApiDomain: !explicitHost,
@@ -190,6 +197,7 @@ export class ZohoBooks {
         invoices: this.invoices,
         creditNotes,
         organizationId: () => this.http.organizationId,
+        log: this.log,
       },
       options.gst,
     );
@@ -240,7 +248,7 @@ export class ZohoBooks {
     return new ZohoBooks(opts);
   }
 
-  private static buildAuth(o: ZohoBooksOptions): AuthProvider {
+  private static buildAuth(o: ZohoBooksOptions, log: SdkLogger): AuthProvider {
     if (o.auth) return o.auth;
     if (o.refreshToken || o.clientId || o.clientSecret) {
       const missing = (['clientId', 'clientSecret', 'refreshToken'] as const).filter((k) => !o[k]);
@@ -254,6 +262,7 @@ export class ZohoBooks {
         ...(o.fetch ? { fetch: o.fetch } : {}),
         ...(o.tokenStore ? { tokenStore: o.tokenStore } : {}),
         ...(o.onTokenRefreshed ? { onTokenRefreshed: o.onTokenRefreshed } : {}),
+        log,
       });
     }
     if (o.accessToken) return new StaticTokenAuth(o.accessToken);

@@ -8,5 +8,6 @@ export default defineConfig({
   test: {
     include: ['test/**/*.test.ts'],
     environment: 'node',
+    env: { ZOHO_BOOKS_LOG_LEVEL: 'silent' },
   },
 });

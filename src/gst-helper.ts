@@ -3,6 +3,7 @@ import { findState, isRetiredStateCode, stateFromGstin, toPlaceOfSupply } from '
 import { GstTaxResolver, determineSupplyType, type GstTaxMap, type SupplyType, type TaxLike } from './gst/tax.js';
 import { parseGstin, validateHsnOrSac } from './gst/validation.js';
 import type { CallOptions } from './http/types.js';
+import type { SdkLogger } from './logging/logger.js';
 import type { ContactsResource } from './resources/contacts.js';
 import type { CreateOptions, InvoicesResource } from './resources/invoices.js';
 import type { CreateCreditNoteOptions, CreditNotesResource } from './resources/sales.js';
@@ -68,6 +69,7 @@ interface Deps {
   invoices: InvoicesResource;
   creditNotes: CreditNotesResource;
   organizationId: () => string | undefined;
+  log: SdkLogger;
 }
 
 interface Context {
@@ -126,6 +128,29 @@ export class GstInvoiceHelper {
     input: GstDocumentInput<T>,
     opts: PrepareOptions = {},
   ): Promise<PreparedGstDocument<T>> {
+    const fields = { organizationId: opts.organizationId ?? this.deps.organizationId(), customerId: input.customer_id };
+    try {
+      const prepared = await this.build<T>(input, opts);
+      this.deps.log.debug('gst', 'zoho.gst.prepared', 'Prepared a GST document', () => ({
+        ...fields,
+        supplyType: prepared.supplyType,
+        placeOfSupply: prepared.placeOfSupply,
+        gstTreatment: prepared.gstTreatment,
+        lines: input.line_items.length,
+      }));
+      return prepared;
+    } catch (error) {
+      if (error instanceof ZohoGstError) {
+        this.deps.log.warn('gst', 'zoho.gst.rejected', error.message, { ...fields, field: error.field });
+      }
+      throw error;
+    }
+  }
+
+  private async build<T extends InvoiceInput | CreditNoteInput>(
+    input: GstDocumentInput<T>,
+    opts: PrepareOptions = {},
+  ): Promise<PreparedGstDocument<T>> {
     const { contact: providedContact, exportMode, query: _query, ...callOpts } = opts;
     const header = input as unknown as SalesDocumentInput;
     const [ctx, contact] = await Promise.all([
@@ -173,7 +198,12 @@ export class GstInvoiceHelper {
     // A rate the cache lacks may be a tax added in Zoho since, so reload once.
     const needsTax = (l: GstLineItem) => l.gstRate !== undefined && l.tax_id === undefined && l.tax_group_id === undefined;
     const rates = input.line_items.filter(needsTax).map((l) => rateOf(l.gstRate!));
-    if (rates.some((r) => !resolver.tryResolve(r, supplyType))) {
+    const missing = rates.filter((r) => !resolver.tryResolve(r, supplyType));
+    if (missing.length) {
+      this.deps.log.info('gst', 'zoho.gst.taxes_reloaded', 'Reloading taxes because a GST rate was not in the cache', {
+        rates: [...new Set(missing)],
+        supplyType,
+      });
       this.refresh();
       resolver = (await this.context(callOpts)).resolver;
     }
