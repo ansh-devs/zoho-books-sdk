@@ -111,7 +111,7 @@ ZohoBooks (client.ts)
 - E-invoicing for invoices and credit notes; `canCancelIrn()` 24 h guard.
 - GST toolkit and `books.gst.createInvoice()` / `createCreditNote()`.
 - Webhook signature verification.
-- 88 unit tests against a scripted fetch (no network), including one regression test per audit finding; package checks with `publint` + `attw`.
+- 120 unit tests against a scripted fetch (no network), including one regression test per audit finding and the cases from a production GST integration; package checks with `publint` + `attw`.
 
 ## 6. Roadmap
 
@@ -133,7 +133,8 @@ ZohoBooks (client.ts)
 ## 8. Open questions / to verify against a live org
 
 - Extra India `gst_treatment` values (`business_sez`, `deemed_export`, `business_registered_composition`, `tax_deductor`, `tax_collector`) exist in the UI, but their API names are not documented. They're accepted as plain strings.
-- The exact 2-letter state codes Zoho uses for Odisha / Telangana / Uttarakhand / Ladakh. Override with `setStateCodeOverrides()` if needed.
+- State codes are now verified in production: Andhra Pradesh is `AD` and Uttarakhand is `UK`. Odisha, Telangana and Ladakh use `OD`, `TS` and `LA` in that integration's map. `setStateCodeOverrides()` remains for edge cases.
+- Zoho's OpenAPI spec lists only `tax_id` on line items, but the production integration sends CGST+SGST groups in `tax_group_id`. The SDK follows production.
 - Request bodies for bulk e-invoice push/cancel and IRN cancel reason fields (passed through as-is).
 - Whether Books accepts `client_credentials` with `soid=ZohoBooks.<org_id>`.
 

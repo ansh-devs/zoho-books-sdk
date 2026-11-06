@@ -1,4 +1,4 @@
-import { ZohoBooksError, ZohoConfigError } from '../errors.js';
+import { ZohoConfigError, ZohoNoRecordError } from '../errors.js';
 import type { HttpClient } from '../http/http-client.js';
 import type { BinaryResponse, CallOptions, HttpMethod, Query } from '../http/types.js';
 import { paginate, collect, type IterateOptions, type ListResult, type PageContext } from '../pagination.js';
@@ -59,7 +59,7 @@ export function extractOne<T>(res: Record<string, unknown>, keys: string[], flat
     const { code: _c, message: _m, ...rest } = res;
     return rest as T;
   }
-  throw new ZohoBooksError(`Unexpected Zoho response: no "${keys[0]}" record`, { status: 200, body: res });
+  throw new ZohoNoRecordError(`Unexpected Zoho response: no "${keys[0]}" record`, { status: 200, body: res });
 }
 
 function mergeQuery(a: Query | undefined, b: Query | undefined): Query | undefined {

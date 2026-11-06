@@ -1,5 +1,5 @@
 /** Record payments from your own system against unpaid Zoho invoices, page by page. */
-import { ZohoBooks } from 'zoho-books-sdk';
+import { ZohoBooks, toZohoDate } from 'zoho-books-sdk';
 
 const books = ZohoBooks.fromEnv();
 const paidInMySystem = new Map<string, number>([['ORDER-1042', 43660]]);
@@ -11,7 +11,7 @@ for await (const inv of books.invoices.iterate({ status: 'unpaid' })) {
     customer_id: inv.customer_id!,
     payment_mode: 'banktransfer',
     amount,
-    date: new Date().toISOString().slice(0, 10),
+    date: toZohoDate(new Date()),
     reference_number: inv.reference_number,
     invoices: [{ invoice_id: inv.invoice_id, amount_applied: amount }],
   });

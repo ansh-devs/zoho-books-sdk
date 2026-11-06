@@ -5,7 +5,7 @@ import { ZohoConfigError } from './errors.js';
 import { GstInvoiceHelper, type GstHelperOptions } from './gst-helper.js';
 import { HttpClient, type RetryOptions } from './http/http-client.js';
 import type { RateLimiterOptions } from './http/rate-limiter.js';
-import type { BinaryResponse, FetchLike, Hooks, Logger, RequestOptions } from './http/types.js';
+import type { BinaryResponse, CallOptions, FetchLike, Hooks, Logger, RequestOptions } from './http/types.js';
 import { BankAccountsResource, BankTransactionsResource, ChartOfAccountsResource, JournalsResource } from './resources/accounting.js';
 import { ContactsResource } from './resources/contacts.js';
 import { InvoicesResource } from './resources/invoices.js';
@@ -73,7 +73,7 @@ export interface ZohoBooksOptions {
   tokenStore?: TokenStore;
   onTokenRefreshed?: (token: StoredToken) => void;
 
-  /** Timeout per request. Default 30 s. */
+  /** Timeout per request. Default 20 s. */
   timeoutMs?: number;
   retry?: RetryOptions;
   /** Throttling per organization. Default 100 per minute and 10 at once. false disables it. */
@@ -208,6 +208,14 @@ export class ZohoBooks {
       this.orgClients.set(organizationId, client);
     }
     return client;
+  }
+
+  /** Check credentials, data center and organization id in one call. Returns the organization name. */
+  async testConnection(opts?: CallOptions): Promise<{ organizationId: string; name: string }> {
+    const orgId = opts?.organizationId ?? this.organizationId;
+    if (!orgId) throw new ZohoConfigError('organizationId is not set');
+    const org = await this.organizations.get(orgId, opts);
+    return { organizationId: org.organization_id ?? orgId, name: org.name };
   }
 
   /** Call any endpoint without a typed wrapper. path is relative to /books/v3. */
