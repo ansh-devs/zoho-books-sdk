@@ -19,12 +19,12 @@
   "author": "ansh-devs",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ansh-devs/Zoho.git"
+    "url": "git+https://github.com/ansh-devs/zoho-books-sdk.git"
   },
   "bugs": {
-    "url": "https://github.com/ansh-devs/Zoho/issues"
+    "url": "https://github.com/ansh-devs/zoho-books-sdk/issues"
   },
-  "homepage": "https://github.com/ansh-devs/Zoho#readme",
+  "homepage": "https://github.com/ansh-devs/zoho-books-sdk#readme",
   "type": "module",
   "sideEffects": false,
   "engines": {
