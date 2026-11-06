@@ -117,6 +117,9 @@ export class ZohoGstError extends ZohoValidationError {
   }
 }
 
+/** Zoho reported success but the response had no record or id. */
+export class ZohoNoRecordError extends ZohoBooksError {}
+
 /** Invalid SDK usage detected before any request was sent. */
 export class ZohoConfigError extends ZohoBooksError {
   constructor(message: string) {

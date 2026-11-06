@@ -58,8 +58,17 @@ abstract class CachingTokenAuth implements AuthProvider {
 
   protected abstract mint(): Promise<TokenResponse>;
 
+  /** Read the cache. A cache outage counts as a miss so requests keep working. */
+  private async cached(): Promise<StoredToken | undefined> {
+    try {
+      return await this.store.get(this.key);
+    } catch {
+      return undefined;
+    }
+  }
+
   async getAccessToken(): Promise<string> {
-    const cached = await this.store.get(this.key);
+    const cached = await this.cached();
     if (cached && cached.expiresAt - this.skewMs > this.now()) {
       this.apiDomain = cached.apiDomain ?? this.apiDomain;
       return cached.accessToken;
@@ -72,8 +81,8 @@ abstract class CachingTokenAuth implements AuthProvider {
   }
 
   async invalidate(token: string): Promise<boolean> {
-    const cached = await this.store.get(this.key);
-    if (!cached || cached.accessToken === token) await this.store.delete(this.key);
+    const cached = await this.cached();
+    if (!cached || cached.accessToken === token) await Promise.resolve(this.store.delete(this.key)).catch(() => undefined);
     return true;
   }
 
@@ -90,7 +99,7 @@ abstract class CachingTokenAuth implements AuthProvider {
   private async doRefresh(): Promise<StoredToken> {
     const run = async (): Promise<StoredToken> => {
       // Another process may have refreshed while we waited for the lock.
-      const cached = await this.store.get(this.key);
+      const cached = await this.cached();
       if (cached && cached.expiresAt - this.skewMs > this.now()) return cached;
 
       const res = await this.mint();
@@ -100,11 +109,23 @@ abstract class CachingTokenAuth implements AuthProvider {
         apiDomain: res.api_domain,
         scope: res.scope,
       };
-      await this.store.set(this.key, token);
+      await Promise.resolve(this.store.set(this.key, token)).catch(() => undefined);
       this.onTokenRefreshed?.(token);
       return token;
     };
-    const token = await (this.store.withLock ? this.store.withLock(this.key, run) : run());
+    let ran = false;
+    const tracked = () => {
+      ran = true;
+      return run();
+    };
+    let token: StoredToken;
+    try {
+      token = await (this.store.withLock ? this.store.withLock(this.key, tracked) : tracked());
+    } catch (error) {
+      // The lock itself failed, e.g. the cache is down. Refresh without it rather than stop.
+      if (ran) throw error;
+      token = await run();
+    }
     this.apiDomain = token.apiDomain ?? this.apiDomain;
     return token;
   }

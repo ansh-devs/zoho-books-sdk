@@ -1,6 +1,13 @@
 export { ZohoBooks, type ZohoBooksOptions } from './client.js';
 
-export { ZohoOAuth, type OAuthClientOptions, type AuthorizationUrlOptions, type TokenResponse } from './auth/oauth.js';
+export {
+  ZohoOAuth,
+  type OAuthClientOptions,
+  type AuthorizationUrlOptions,
+  type TokenResponse,
+  type OAuthCallback,
+  type ExchangedTokens,
+} from './auth/oauth.js';
 export {
   RefreshTokenAuth,
   ClientCredentialsAuth,
@@ -10,6 +17,7 @@ export {
   type ClientCredentialsAuthOptions,
 } from './auth/providers.js';
 export { MemoryTokenStore, type TokenStore, type StoredToken } from './auth/token-store.js';
+export { cacheTokenStore, type KeyValueCache, type CacheTokenStoreOptions } from './auth/cache-store.js';
 export { scope, Scopes, SCOPE_MODULES, type ScopeModule, type ScopeOperation } from './scopes.js';
 
 export { DATA_CENTERS, BOOKS_API_PATH, resolveDataCenter, dataCenterFromUrl, type DataCenter, type DataCenterEndpoints } from './datacenters.js';
@@ -27,6 +35,7 @@ export {
   ZohoTimeoutError,
   ZohoOAuthError,
   ZohoGstError,
+  ZohoNoRecordError,
   ZohoConfigError,
   type RateLimitKind,
   type ZohoErrorDetails,
@@ -86,6 +95,20 @@ export {
   type PrepareOptions,
 } from './gst-helper.js';
 export * from './gst/index.js';
+
+export { settle, resultCode, type Result, type ResultCode } from './result.js';
+export {
+  InvoiceWorkflow,
+  contactFromProfile,
+  nextRetryAt,
+  RETRY_SCHEDULE_MINUTES,
+  type InvoiceOrder,
+  type InvoiceLine,
+  type WorkflowState,
+  type WorkflowOutcome,
+  type HoldRule,
+  type InvoiceWorkflowOptions,
+} from './workflow.js';
 
 export { verifyWebhookSignature, computeWebhookSignature, WEBHOOK_SIGNATURE_HEADER, type WebhookSignatureInput } from './webhooks.js';
 

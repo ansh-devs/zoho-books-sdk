@@ -1,5 +1,5 @@
 import { ZohoGstError } from './errors.js';
-import { findState, stateFromGstin, toPlaceOfSupply } from './gst/states.js';
+import { findState, isRetiredStateCode, stateFromGstin, toPlaceOfSupply } from './gst/states.js';
 import { GstTaxResolver, determineSupplyType, type GstTaxMap, type SupplyType, type TaxLike } from './gst/tax.js';
 import { parseGstin, validateHsnOrSac } from './gst/validation.js';
 import type { CallOptions } from './http/types.js';
@@ -19,6 +19,8 @@ export interface GstHelperOptions {
   validateHsn?: boolean | { minDigits: 4 | 6 | 8 };
   /** Require hsn_or_sac on every line, as e invoices do. */
   requireHsn?: boolean;
+  /** Require place of supply to match the GSTIN state. Default true. Turn off for goods shipped to another state. */
+  strictPlaceOfSupply?: boolean;
 }
 
 /** A line item that may carry a GST rate instead of a Zoho tax_id. */
@@ -42,7 +44,12 @@ export interface PreparedGstDocument<T> {
 export interface PrepareOptions extends CallOptions {
   /** Use this contact instead of fetching it. */
   contact?: Contact;
+  /** Required for overseas customers. lut zero rates the supply, igst charges IGST at each line's rate. */
+  exportMode?: 'lut' | 'igst';
 }
+
+/** Treatments that must not carry a GSTIN. */
+const NO_GSTIN: ReadonlySet<string> = new Set(['consumer', 'business_none', 'overseas']);
 
 /** Treatments that require the customer's GSTIN. */
 const NEEDS_GSTIN: ReadonlySet<string> = new Set([
@@ -119,7 +126,7 @@ export class GstInvoiceHelper {
     input: GstDocumentInput<T>,
     opts: PrepareOptions = {},
   ): Promise<PreparedGstDocument<T>> {
-    const { contact: providedContact, query: _query, ...callOpts } = opts;
+    const { contact: providedContact, exportMode, query: _query, ...callOpts } = opts;
     const header = input as unknown as SalesDocumentInput;
     const [ctx, contact] = await Promise.all([
       this.context(callOpts),
@@ -132,6 +139,9 @@ export class GstInvoiceHelper {
     const rawGstin = header.gst_no ?? contact.gst_no;
 
     let gstNo: string | undefined;
+    if (rawGstin && gstTreatment && NO_GSTIN.has(gstTreatment)) {
+      throw new ZohoGstError(`A GSTIN is not allowed with GST treatment "${gstTreatment}"`, 'gst_no');
+    }
     if (rawGstin) {
       const info = parseGstin(rawGstin);
       if (!info.valid) throw new ZohoGstError(`Invalid GSTIN "${rawGstin}": ${info.reason}`, 'gst_no');
@@ -143,13 +153,26 @@ export class GstInvoiceHelper {
     const posSource = header.place_of_supply ?? contact.place_of_contact ?? (gstNo ? stateFromGstin(gstNo)?.code : undefined);
     const placeOfSupply = gstTreatment === 'overseas' && !posSource ? undefined : toPlaceOfSupply(posSource ?? homeState);
     if (posSource && !placeOfSupply) {
-      throw new ZohoGstError(`Unknown place of supply "${posSource}"`, 'place_of_supply');
+      const why = isRetiredStateCode(posSource) ? 'is a retired state code' : 'is unknown';
+      throw new ZohoGstError(`Place of supply "${posSource}" ${why}`, 'place_of_supply');
     }
+    const gstinState = gstNo ? stateFromGstin(gstNo) : undefined;
+    if (gstinState && placeOfSupply && this.options.strictPlaceOfSupply !== false && findState(placeOfSupply)?.code !== gstinState.code) {
+      throw new ZohoGstError(
+        `Place of supply ${placeOfSupply} does not match the GSTIN state ${gstinState.code}. Set strictPlaceOfSupply false for goods shipped elsewhere`,
+        'place_of_supply',
+      );
+    }
+    if (gstTreatment === 'overseas' && !exportMode) {
+      throw new ZohoGstError('Overseas supplies need exportMode: lut to zero rate them, or igst to charge IGST', 'exportMode');
+    }
+    const rateOf = (rate: number) => (exportMode === 'lut' && gstTreatment === 'overseas' ? 0 : rate);
 
     const supplyType = determineSupplyType({ homeState, placeOfSupply, gstTreatment });
 
     // A rate the cache lacks may be a tax added in Zoho since, so reload once.
-    const rates = input.line_items.filter((l) => l.gstRate !== undefined && l.tax_id === undefined).map((l) => l.gstRate!);
+    const needsTax = (l: GstLineItem) => l.gstRate !== undefined && l.tax_id === undefined && l.tax_group_id === undefined;
+    const rates = input.line_items.filter(needsTax).map((l) => rateOf(l.gstRate!));
     if (rates.some((r) => !resolver.tryResolve(r, supplyType))) {
       this.refresh();
       resolver = (await this.context(callOpts)).resolver;
@@ -165,9 +188,10 @@ export class GstInvoiceHelper {
         if (!v.valid) throw new ZohoGstError(`line_items[${i}]: ${v.reason}`, `line_items[${i}].hsn_or_sac`);
         rest.hsn_or_sac = v.code;
       }
-      if (gstRate !== undefined && rest.tax_id === undefined) {
+      if (needsTax(line)) {
         try {
-          rest.tax_id = resolver.resolve(gstRate, supplyType);
+          const tax = resolver.resolve(rateOf(gstRate!), supplyType);
+          rest[tax.field] = tax.id;
         } catch (e) {
           throw new ZohoGstError(`line_items[${i}]: ${(e as Error).message}`, `line_items[${i}].tax_id`);
         }

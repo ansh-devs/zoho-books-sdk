@@ -16,7 +16,20 @@ All notable changes to this project are documented here. This project follows [S
 - `books.gst.createInvoice()` / `createCreditNote()` with automatic place of supply and tax selection.
 - Webhook signature verification.
 
+### Added from a production GST invoicing integration
+- `InvoiceWorkflow`: contact, invoice, payment, IRP push and email for one paid order, resumable from saved ids, with hold rules, a ₹0.05 total tolerance and `nextRetryAt` backoff.
+- `settle()` returns `{ success, data }` or `{ success: false, code }` instead of throwing.
+- `cacheTokenStore()`: shared token cache with a SET NX EX refresh lock across processes. Cache outages fall back to a direct refresh.
+- `ZohoOAuth.parseCallback()` and `exchangeCode(..., callback)` for users in other data centers, with `allowedDataCenters`.
+- `invoices.findByReference()` and `contacts.findByEmail()` adopt exact matches only.
+- `validateBillingProfile()`, `gstTreatmentOf()`, `toZohoDate()` (India time), `isRetiredStateCode()`, `books.testConnection()`.
+
 ### Changed before first release
+- Andhra Pradesh uses Zoho's code `AD`. Retired prefixes 25 and 28 and code `DD` are refused for new data, but accepted on old GSTINs.
+- Intra state CGST plus SGST groups are sent in `tax_group_id`; IGST stays in `tax_id`. `GstTaxResolver.resolve` returns `{ id, field }`.
+- The GST helper refuses a GSTIN on consumer, unregistered and overseas invoices, checks the place of supply against the GSTIN state, and requires `exportMode` for overseas customers.
+- `computeGst` works in whole paise internally.
+- Default request timeout is 20 s.
 - Every resource method takes `CallOptions` as its last argument, with `query` for extra parameters. `get(id, opts)`, `create(data, opts)`, `iterate(params, { limit, ...opts })`.
 - Input and filter types are strict. Custom field filters use the `cf_` prefix.
 - Each module's type only exposes the document endpoints Zoho has. Calling a missing one rejects with `ZohoConfigError`.

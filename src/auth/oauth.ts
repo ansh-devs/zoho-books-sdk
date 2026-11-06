@@ -1,5 +1,5 @@
 import { ZohoNetworkError, ZohoOAuthError } from '../errors.js';
-import { resolveDataCenter, type DataCenter } from '../datacenters.js';
+import { DATA_CENTERS, dataCenterFromUrl, resolveDataCenter, type DataCenter } from '../datacenters.js';
 import type { FetchLike } from '../http/types.js';
 
 export interface OAuthClientOptions {
@@ -11,7 +11,26 @@ export interface OAuthClientOptions {
   accountsUrl?: string;
   /** Send token parameters in the form body (default) or the query string, as Zoho docs show. */
   tokenParamsIn?: 'body' | 'query';
+  /** Data centers whose users may sign in. Each needs Multi DC enabled for this client in the Zoho API console. */
+  allowedDataCenters?: DataCenter[];
   fetch?: FetchLike;
+}
+
+/** Values Zoho adds to the redirect after consent. */
+export interface OAuthCallback {
+  code?: string;
+  state?: string;
+  error?: string;
+  /** User's data center location, e.g. in or eu. */
+  location?: string;
+  /** Accounts server of the user's data center. Exchange the code there. */
+  accountsServer?: string;
+}
+
+/** Tokens plus the data center they belong to. Store dataCenter with the refresh token. */
+export interface ExchangedTokens extends TokenResponse {
+  accountsServer: string;
+  dataCenter: DataCenter | undefined;
 }
 
 export interface AuthorizationUrlOptions {
@@ -42,8 +61,10 @@ export class ZohoOAuth {
   private readonly clientSecret: string;
   private readonly fetchImpl: FetchLike;
   private readonly paramsIn: 'body' | 'query';
+  private readonly allowed: ReadonlySet<DataCenter> | undefined;
 
   constructor(options: OAuthClientOptions) {
+    this.allowed = options.allowedDataCenters ? new Set(options.allowedDataCenters) : undefined;
     this.clientId = options.clientId;
     this.clientSecret = options.clientSecret;
     this.paramsIn = options.tokenParamsIn ?? 'body';
@@ -63,8 +84,27 @@ export class ZohoOAuth {
     return url.toString();
   }
 
-  /** Exchange a grant code for tokens. */
-  exchangeCode(code: string, redirectUri?: string): Promise<TokenResponse> {
+  /** Read code, state, location and accounts server from the redirect URL or its query. */
+  static parseCallback(input: string | URL | URLSearchParams | Record<string, string | undefined>): OAuthCallback {
+    const params =
+      input instanceof URLSearchParams
+        ? input
+        : typeof input === 'string' || input instanceof URL
+          ? new URL(String(input), 'http://localhost').searchParams
+          : new URLSearchParams(Object.entries(input).filter((e): e is [string, string] => e[1] !== undefined));
+    const pick = (k: string) => params.get(k) ?? undefined;
+    return {
+      code: pick('code'),
+      state: pick('state'),
+      error: pick('error'),
+      location: pick('location'),
+      accountsServer: pick('accounts-server'),
+    };
+  }
+
+  /** Exchange a grant code. Pass the callback's accountsServer so users of any allowed data center can sign in. */
+  async exchangeCode(code: string, redirectUri?: string, callback: { accountsServer?: string } = {}): Promise<ExchangedTokens> {
+    const accountsServer = this.checkAccountsServer(callback.accountsServer);
     const params: Record<string, string> = {
       grant_type: 'authorization_code',
       code,
@@ -72,7 +112,24 @@ export class ZohoOAuth {
       client_secret: this.clientSecret,
     };
     if (redirectUri) params.redirect_uri = redirectUri;
-    return this.tokenRequest(params);
+    const tokens = await this.tokenRequest(params, accountsServer);
+    return { ...tokens, accountsServer, dataCenter: dataCenterFromUrl(accountsServer) };
+  }
+
+  /** Validate a callback's accounts server against known Zoho hosts and the allowed data centers. */
+  private checkAccountsServer(server: string | undefined): string {
+    if (!server) return this.accountsUrl;
+    const dc = dataCenterFromUrl(server);
+    if (!dc || new URL(server).protocol !== 'https:' || DATA_CENTERS[dc].accountsUrl !== new URL(server).origin) {
+      throw new ZohoOAuthError(`Unknown Zoho accounts server "${server}"`, { status: 0, oauthError: 'invalid_accounts_server' });
+    }
+    if (this.allowed && !this.allowed.has(dc)) {
+      throw new ZohoOAuthError(
+        `This account is in the ${dc} data center, which this client does not allow. Enable Multi DC for ${dc} in the Zoho API console and add it to allowedDataCenters.`,
+        { status: 0, oauthError: 'data_center_not_allowed' },
+      );
+    }
+    return DATA_CENTERS[dc].accountsUrl;
   }
 
   refresh(refreshToken: string): Promise<TokenResponse> {
@@ -110,9 +167,9 @@ export class ZohoOAuth {
     }
   }
 
-  private async tokenRequest(params: Record<string, string>): Promise<TokenResponse> {
+  private async tokenRequest(params: Record<string, string>, accountsUrl = this.accountsUrl): Promise<TokenResponse> {
     const encoded = new URLSearchParams(params).toString();
-    const url = `${this.accountsUrl}/oauth/v2/token${this.paramsIn === 'query' ? `?${encoded}` : ''}`;
+    const url = `${accountsUrl}/oauth/v2/token${this.paramsIn === 'query' ? `?${encoded}` : ''}`;
     let res: Response;
     try {
       res = await this.fetchImpl(url, {
@@ -142,7 +199,11 @@ export class ZohoOAuth {
       const oauthError = typeof body.error === 'string' ? body.error : undefined;
       throw new ZohoOAuthError(
         `Zoho OAuth token request failed: ${oauthError ?? `HTTP ${res.status}`}${
-          oauthError === 'invalid_code' ? ' (refresh token or grant code is invalid, expired or revoked, or the data center is wrong)' : ''
+          oauthError === 'invalid_code'
+            ? ' (refresh token or grant code is invalid, expired or revoked, or the data center is wrong)'
+            : oauthError === 'invalid_client'
+              ? ' (wrong client id or secret, or Multi DC is not enabled for this data center in the Zoho API console)'
+              : ''
         }`,
         { status: res.status, body, method: 'POST', path: '/oauth/v2/token', oauthError },
       );

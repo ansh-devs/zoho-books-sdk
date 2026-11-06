@@ -46,7 +46,10 @@ describe('states', () => {
     expect(findState('29')?.code).toBe('KA');
     expect(findState('tamil nadu')?.code).toBe('TN');
     expect(findState('Orissa')?.code).toBe('OD');
-    expect(findState('28')?.code).toBe('AP'); // legacy AP code
+    expect(findState('28')).toBeUndefined(); // retired prefix
+    expect(findState('37')?.code).toBe('AD');
+    expect(findState('AP')?.code).toBe('AD');
+    expect(stateFromGstin('28AAAAA0000A1Z5')?.code).toBe('AD');
     expect(stateFromGstin('36AAAAA0000A1Z5')?.code).toBe('TS');
     expect(toPlaceOfSupply('Delhi')).toBe('DL');
     expect(findState('XX')).toBeUndefined();
@@ -128,12 +131,12 @@ const TAXES = [
 describe('GstTaxResolver', () => {
   it('picks the group for intra and IGST for inter', () => {
     const r = new GstTaxResolver(TAXES);
-    expect(r.resolve(18, 'intra')).toBe('gst18');
-    expect(r.resolve(18, 'inter')).toBe('igst18');
-    expect(r.resolve(5, 'inter')).toBe('igst5');
+    expect(r.resolve(18, 'intra')).toEqual({ id: 'gst18', field: 'tax_group_id' });
+    expect(r.resolve(18, 'inter')).toEqual({ id: 'igst18', field: 'tax_id' });
+    expect(r.resolve(5, 'inter')).toEqual({ id: 'igst5', field: 'tax_id' });
   });
   it('explicit taxMap wins', () => {
-    expect(new GstTaxResolver(TAXES, { 18: { intra: 'custom' } }).resolve(18, 'intra')).toBe('custom');
+    expect(new GstTaxResolver(TAXES, { 18: { intra: 'custom' } }).resolve(18, 'intra')).toEqual({ id: 'custom', field: 'tax_group_id' });
   });
   it('throws a helpful error', () => {
     expect(() => new GstTaxResolver(TAXES).resolve(12, 'intra')).toThrow(/No CGST\+SGST group tax found for 12%.*Available/);
@@ -163,7 +166,7 @@ describe('client.gst helper', () => {
       gst_treatment: 'business_gst',
       gst_no: '29AAGCB7383J1Z4',
       place_of_supply: 'KA',
-      line_items: [{ item_id: 'i1', tax_id: 'gst18', hsn_or_sac: '998314' }],
+      line_items: [{ item_id: 'i1', tax_group_id: 'gst18', hsn_or_sac: '998314' }],
     });
     expect((post.body as { line_items: Array<Record<string, unknown>> }).line_items[0]).not.toHaveProperty('gstRate');
   });

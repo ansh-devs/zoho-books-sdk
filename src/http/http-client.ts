@@ -86,7 +86,7 @@ export class HttpClient {
       throw new ZohoConfigError('No fetch implementation found. Use Node.js 18.17 or newer, or pass fetch in the options.');
     }
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
-    this.timeoutMs = options.timeoutMs ?? 30_000;
+    this.timeoutMs = options.timeoutMs ?? 20_000;
     this.retry = {
       maxRetries: options.retry?.maxRetries ?? 3,
       baseDelayMs: options.retry?.baseDelayMs ?? 500,

@@ -58,6 +58,14 @@ export class InvoicesResource extends DocumentResource<Invoice, InvoiceInput, In
     return super.create(data, withCreateFlags(opts));
   }
 
+  /** Invoice whose reference_number equals ref exactly. Zoho's filter also returns partial matches. */
+  async findByReference(ref: string, opts?: CallOptions): Promise<Invoice | undefined> {
+    for await (const inv of this.iterate({ reference_number: ref }, { ...opts, limit: 200 })) {
+      if (inv.reference_number === ref) return inv;
+    }
+    return undefined;
+  }
+
   /** Invoice by its external reference id. */
   async getByReference(referenceId: string, opts?: CallOptions): Promise<Invoice> {
     return this.one<Invoice>('GET', this.url('reference', referenceId), {}, opts);

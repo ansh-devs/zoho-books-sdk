@@ -69,46 +69,52 @@ export interface ComputeGstOptions {
   roundToRupee?: boolean;
 }
 
-/** GST breakdown computed locally, rounded per line with CGST and SGST split evenly. */
+/** Round half away from zero to a whole number. */
+function roundInt(x: number): number {
+  return Math.sign(x) * Math.round(Math.abs(x) * (1 + Number.EPSILON));
+}
+
+/** GST breakdown computed locally in whole paise, rounded per line with CGST and SGST split evenly. */
 export function computeGst(lines: GstLineInput[], options: ComputeGstOptions): GstBreakdown {
-  const out: GstLineBreakdown[] = lines.map((l) => {
-    const gross = l.quantity * l.rate;
+  const paise = lines.map((l) => {
+    const gross = roundInt(l.quantity * l.rate * 100);
     const discount =
       typeof l.discount === 'string' && l.discount.trim().endsWith('%')
-        ? (gross * Number.parseFloat(l.discount)) / 100
-        : Number(l.discount ?? 0);
+        ? roundInt((gross * Number.parseFloat(l.discount)) / 100)
+        : roundInt(Number(l.discount ?? 0) * 100);
     const amount = gross - discount;
     const rateTotal = l.gstRate + (l.cessRate ?? 0);
-    const taxable = roundMoney(options.inclusive ? amount / (1 + rateTotal / 100) : amount);
-
-    let cgst = 0;
-    let sgst = 0;
-    let igst = 0;
-    if (options.supplyType === 'intra') {
-      cgst = roundMoney((taxable * l.gstRate) / 200);
-      sgst = cgst;
-    } else {
-      igst = roundMoney((taxable * l.gstRate) / 100);
-    }
-    const cess = roundMoney((taxable * (l.cessRate ?? 0)) / 100);
-    const totalTax = roundMoney(cgst + sgst + igst + cess);
-    return { taxableValue: taxable, cgst, sgst, igst, cess, totalTax, total: roundMoney(taxable + totalTax) };
+    const taxable = options.inclusive ? roundInt((amount * 100) / (100 + rateTotal)) : amount;
+    const cgst = options.supplyType === 'intra' ? roundInt((taxable * l.gstRate) / 200) : 0;
+    const igst = options.supplyType === 'inter' ? roundInt((taxable * l.gstRate) / 100) : 0;
+    const cess = roundInt((taxable * (l.cessRate ?? 0)) / 100);
+    const totalTax = cgst * 2 + igst + cess;
+    return { taxableValue: taxable, cgst, sgst: cgst, igst, cess, totalTax, total: taxable + totalTax };
   });
 
-  const sum = (k: keyof GstLineBreakdown) => roundMoney(out.reduce((a, l) => a + l[k], 0));
-  const total = sum('total');
-  const grandTotal = options.roundToRupee ? Math.round(total) : total;
+  const toRupees = (p: GstLineBreakdown): GstLineBreakdown => ({
+    taxableValue: p.taxableValue / 100,
+    cgst: p.cgst / 100,
+    sgst: p.sgst / 100,
+    igst: p.igst / 100,
+    cess: p.cess / 100,
+    totalTax: p.totalTax / 100,
+    total: p.total / 100,
+  });
+  const sum = (k: keyof GstLineBreakdown) => paise.reduce((a, l) => a + l[k], 0);
+  const totalPaise = sum('total');
+  const grandPaise = options.roundToRupee ? roundInt(totalPaise / 100) * 100 : totalPaise;
   return {
-    lines: out,
-    taxableValue: sum('taxableValue'),
-    cgst: sum('cgst'),
-    sgst: sum('sgst'),
-    igst: sum('igst'),
-    cess: sum('cess'),
-    totalTax: sum('totalTax'),
-    total,
-    roundOff: roundMoney(grandTotal - total),
-    grandTotal,
+    lines: paise.map(toRupees),
+    taxableValue: sum('taxableValue') / 100,
+    cgst: sum('cgst') / 100,
+    sgst: sum('sgst') / 100,
+    igst: sum('igst') / 100,
+    cess: sum('cess') / 100,
+    totalTax: sum('totalTax') / 100,
+    total: totalPaise / 100,
+    roundOff: (grandPaise - totalPaise) / 100,
+    grandTotal: grandPaise / 100,
   };
 }
 
@@ -129,7 +135,13 @@ export interface TaxLike {
 /** Explicit rate to tax id mapping, e.g. { 18: { intra: groupId, inter: igstId } }. */
 export type GstTaxMap = Record<number, Partial<Record<SupplyType, string>>>;
 
-/** Picks the Zoho tax id for a rate: the CGST plus SGST group when intra, IGST when inter. taxMap wins. */
+/** A resolved tax. Zoho takes a tax group in tax_group_id and a single tax in tax_id. */
+export interface ResolvedTax {
+  id: string;
+  field: 'tax_id' | 'tax_group_id';
+}
+
+/** Picks the Zoho tax for a rate: the CGST plus SGST group when intra, IGST when inter. taxMap wins. */
 export class GstTaxResolver {
   private readonly taxes: TaxLike[];
   private readonly taxMap: GstTaxMap;
@@ -139,10 +151,10 @@ export class GstTaxResolver {
     this.taxMap = taxMap;
   }
 
-  /** Tax id, or throws listing what the org has configured. */
-  resolve(rate: number, supplyType: SupplyType): string {
-    const id = this.tryResolve(rate, supplyType);
-    if (id) return id;
+  /** The tax for a rate, or throws listing what the org has configured. */
+  resolve(rate: number, supplyType: SupplyType): ResolvedTax {
+    const found = this.tryResolve(rate, supplyType);
+    if (found) return found;
     const available = this.taxes
       .map((t) => `${nameOf(t)} (${percentOf(t)}%${t.tax_specific_type ? `, ${t.tax_specific_type}` : ''}${isGroup(t) ? ', group' : ''})`)
       .join('; ');
@@ -152,25 +164,24 @@ export class GstTaxResolver {
     );
   }
 
-  tryResolve(rate: number, supplyType: SupplyType): string | undefined {
+  tryResolve(rate: number, supplyType: SupplyType): ResolvedTax | undefined {
     const mapped = this.taxMap[rate]?.[supplyType];
-    if (mapped) return mapped;
+    if (mapped) return { id: mapped, field: supplyType === 'intra' && rate > 0 ? 'tax_group_id' : 'tax_id' };
     const candidates = this.taxes.filter((t) => Math.abs(percentOf(t) - rate) < 1e-6);
 
     if (supplyType === 'inter') {
-      const igst =
-        candidates.find((t) => t.tax_specific_type === 'igst') ??
-        candidates.find((t) => !isGroup(t) && /igst/i.test(nameOf(t)));
-      return idOf(igst);
+      return toResolved(
+        candidates.find((t) => t.tax_specific_type === 'igst') ?? candidates.find((t) => !isGroup(t) && /igst/i.test(nameOf(t))),
+      );
     }
     if (rate === 0) {
       const nil = candidates.find((t) => t.tax_specific_type === 'nil' || /nil|exempt|zero/i.test(nameOf(t)));
-      if (nil) return idOf(nil);
+      if (nil) return toResolved(nil);
     }
-    const group =
+    return toResolved(
       candidates.find((t) => isGroup(t) && !/igst/i.test(nameOf(t))) ??
-      candidates.find((t) => /^gst/i.test(nameOf(t)) && !/igst/i.test(nameOf(t)));
-    return idOf(group);
+        candidates.find((t) => /^gst/i.test(nameOf(t)) && !/igst/i.test(nameOf(t))),
+    );
   }
 }
 
@@ -183,6 +194,7 @@ function percentOf(t: TaxLike): number {
 function nameOf(t: TaxLike): string {
   return String(t.tax_name ?? t.tax_group_name ?? '');
 }
-function idOf(t: TaxLike | undefined): string | undefined {
-  return t ? (t.tax_id ?? t.tax_group_id) : undefined;
+function toResolved(t: TaxLike | undefined): ResolvedTax | undefined {
+  const id = t ? (t.tax_group_id ?? t.tax_id) : undefined;
+  return t && id ? { id, field: isGroup(t) ? 'tax_group_id' : 'tax_id' } : undefined;
 }

@@ -1,14 +1,14 @@
-/** Indian state with its GSTIN prefix and the two letter code Zoho uses for place of supply.
- * Zoho does not publish the letter codes, so they can be remapped with setStateCodeOverrides. */
+/** Indian state with its GSTIN prefix and the two letter code Zoho uses for place of supply. */
 export interface IndianState {
   /** GSTIN prefix, e.g. 33. */
   gstCode: string;
-  /** Place of supply code, e.g. TN. */
+  /** Zoho place of supply code, e.g. TN. */
   code: string;
   name: string;
   isUnionTerritory: boolean;
 }
 
+// Zoho uses AD for Andhra Pradesh and UK for Uttarakhand, verified in production.
 const RAW: Array<[string, string, string, boolean]> = [
   ['01', 'JK', 'Jammu and Kashmir', true],
   ['02', 'HP', 'Himachal Pradesh', false],
@@ -44,26 +44,29 @@ const RAW: Array<[string, string, string, boolean]> = [
   ['34', 'PY', 'Puducherry', true],
   ['35', 'AN', 'Andaman and Nicobar Islands', true],
   ['36', 'TS', 'Telangana', false],
-  ['37', 'AP', 'Andhra Pradesh', false],
+  ['37', 'AD', 'Andhra Pradesh', false],
   ['38', 'LA', 'Ladakh', true],
   ['97', 'OT', 'Other Territory', true],
 ];
 
-/** Old GSTIN prefixes still seen on existing registrations. */
-const LEGACY_GST_CODES: Record<string, string> = {
-  '25': 'DN', // Daman and Diu, merged into 26 in 2020
-  '28': 'AP', // Andhra Pradesh before the 2014 split
+/** Retired prefixes. Valid on old GSTINs, refused as a place of supply for new data. */
+const RETIRED_GST_CODES: Record<string, string> = {
+  '25': 'DN',
+  '28': 'AD',
 };
 
-/** Other spellings and codes in common use. */
+/** Retired letter codes, refused for new data. */
+const RETIRED_CODES = new Set(['DD']);
+
+/** Other spellings and codes in common use, mapped to Zoho's code. */
 const ALIASES: Record<string, string> = {
+  AP: 'AD',
   OR: 'OD',
   ORISSA: 'OD',
   TG: 'TS',
   UT: 'UK',
   UTTARANCHAL: 'UK',
   CT: 'CG',
-  DD: 'DN',
   PONDICHERRY: 'PY',
   'NEW DELHI': 'DL',
   'NCT OF DELHI': 'DL',
@@ -88,31 +91,37 @@ const byCode = new Map(INDIAN_STATES.map((s) => [s.code, s]));
 const byGst = new Map(INDIAN_STATES.map((s) => [s.gstCode, s]));
 const byName = new Map(INDIAN_STATES.map((s) => [s.name.toUpperCase(), s]));
 
-/** State from a letter code, GSTIN prefix or name, ignoring case. undefined when unknown. */
+/** True for a retired GSTIN prefix or letter code such as 25, 28 or DD. */
+export function isRetiredStateCode(input: string): boolean {
+  const raw = input.trim().toUpperCase();
+  return RETIRED_CODES.has(raw) || raw.padStart(2, '0') in RETIRED_GST_CODES;
+}
+
+/** Current state from a letter code, GSTIN prefix or name, ignoring case. Retired codes give undefined. */
 export function findState(input: string | undefined | null): IndianState | undefined {
   if (!input) return undefined;
   const raw = input.trim().toUpperCase();
-  if (!raw) return undefined;
+  if (!raw || isRetiredStateCode(raw)) return undefined;
   const reverse = Object.entries(overrides).find(([, v]) => v === raw)?.[0];
   const key = reverse ?? ALIASES[raw] ?? raw;
   return (
     byCode.get(key) ??
-    byGst.get(key.padStart(2, '0')) ??
-    (LEGACY_GST_CODES[key] ? byCode.get(LEGACY_GST_CODES[key]!) : undefined) ??
+    (/^\d{1,2}$/.test(key) ? byGst.get(key.padStart(2, '0')) : undefined) ??
     byName.get(key) ??
     byName.get(raw.replace(/&/g, 'AND').replace(/\s+/g, ' '))
   );
 }
 
-/** Place of supply code for any state code, prefix or name. */
+/** Zoho place of supply code for any current state code, prefix or name. */
 export function toPlaceOfSupply(input: string | undefined | null): string | undefined {
   const s = findState(input);
   return s ? applyOverride(s.code) : undefined;
 }
 
-/** State from the first two digits of a GSTIN. */
+/** State from the first two digits of a GSTIN, including retired prefixes on old registrations. */
 export function stateFromGstin(gstin: string): IndianState | undefined {
   const prefix = gstin.trim().slice(0, 2);
   if (!/^\d{2}$/.test(prefix)) return undefined;
-  return byGst.get(prefix) ?? (LEGACY_GST_CODES[prefix] ? byCode.get(LEGACY_GST_CODES[prefix]!) : undefined);
+  const retired = RETIRED_GST_CODES[prefix];
+  return byGst.get(prefix) ?? (retired ? byCode.get(retired) : undefined);
 }

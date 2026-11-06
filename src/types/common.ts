@@ -79,7 +79,10 @@ export interface LineItemInput {
   /** Percentage string such as "10%" or a flat amount. */
   discount?: number | string;
   discount_amount?: number;
+  /** A single tax such as IGST. */
   tax_id?: string;
+  /** A tax group such as CGST plus SGST. Zoho takes groups in this field, not in tax_id. */
+  tax_group_id?: string;
   tds_tax_id?: string;
   tax_exemption_id?: string;
   tax_exemption_code?: string;

@@ -12,7 +12,8 @@ npm install zoho-books-sdk
 - **OAuth done right:** automatic refresh that never sends duplicate refresh requests, a pluggable token store (Redis, a database) and all 10 Zoho data centers
 - **Safe retries:** jittered backoff, 401 refresh-and-replay, and per-org rate and concurrency limiting. POSTs are never retried after a 5xx, so you don't get duplicate invoices.
 - **Typed errors:** `ZohoRateLimitError` (`kind: 'minute' | 'daily' | 'concurrency'`), `ZohoValidationError`, `ZohoNotFoundError`, and more. A non-zero Zoho `code` is always thrown, even when the HTTP status is 200.
-- **GST toolkit:** GSTIN checksum validation, HSN/SAC checks, state codes, intra- vs inter-state detection, CGST/SGST/IGST math, and automatic `tax_id` selection
+- **GST toolkit:** GSTIN checksum validation, HSN/SAC checks, Zoho's state codes, intra- vs inter-state detection, CGST/SGST/IGST math in whole paise, and automatic tax selection
+- **Paid-order workflow:** contact, invoice, payment, IRP push and email in one resumable call, with holds for anything that shouldn't be invoiced automatically
 - **Files:** PDF download (single and bulk), attachments, receipts
 - **Webhooks:** `verifyWebhookSignature()` for `X-Zoho-Webhook-Signature`
 - **Packaging:** dual ESM/CJS with full `.d.ts`; Node ≥ 18.17; no runtime dependencies
@@ -67,8 +68,13 @@ const url = oauth.authorizationUrl({
 });
 
 // in your callback handler:
-const { refresh_token, api_domain } = await oauth.exchangeCode(code, 'https://your.app/zoho/callback');
+const callback = ZohoOAuth.parseCallback(req.url);
+const { refresh_token, dataCenter } = await oauth.exchangeCode(callback.code!, 'https://your.app/zoho/callback', callback);
 ```
+
+Store `dataCenter` next to the refresh token; later refreshes must go to that data center.
+
+**Users in other data centers.** Always start the consent redirect at your client's home data center. Zoho sends the user's real data center back on the callback (`location` and `accounts-server`), and `exchangeCode` uses it when you pass the parsed callback. Each extra data center needs Multi DC enabled for your client in the Zoho API console. Pass `allowedDataCenters: ['in', 'eu']` to `ZohoOAuth` to get a clear error, instead of Zoho's "Invalid client", when someone signs in from a data center you haven't enabled.
 
 Grant codes expire within minutes and work only once. Zoho keeps at most 20 refresh tokens per user and silently deletes the oldest, so store each refresh token and reuse it.
 
@@ -82,12 +88,18 @@ const orgs = await new ZohoBooks({ clientId, clientSecret, refreshToken, dataCen
 
 Give the helper a customer and line items with a `gstRate`. It then:
 
-- works out `place_of_supply` from the request, the contact's `place_of_contact` or the GSTIN state code
-- validates the GSTIN and checks that B2B treatments have one
+- works out `place_of_supply` from the request, the contact's `place_of_contact` or the GSTIN state code. A consumer with no address is placed in your own state (IGST Act s.12(2)(b))
+- validates the GSTIN, requires one for B2B, and refuses one on consumer, unregistered or overseas invoices
+- checks that the place of supply matches the GSTIN's state (set `strictPlaceOfSupply: false` for goods shipped to another state)
 - decides intra-state (CGST+SGST) or inter-state (IGST), treating SEZ and overseas as inter-state
-- fills in the right Zoho `tax_id` on every line from your org's configured taxes
+- fills in each line's tax: a CGST+SGST group goes in `tax_group_id`, IGST goes in `tax_id`
+- refuses to silently charge IGST on exports: overseas customers need `exportMode: 'lut'` (zero rated) or `exportMode: 'igst'`
 
 All validation runs before anything is written to Zoho.
+
+**Collect the GSTIN before invoicing.** An invoice raised as B2C and later changed to B2B needs a GSTR-1 amendment (Table 9A), and the buyer's input tax credit arrives late.
+
+**State codes.** Zoho uses its own two-letter codes, which differ from the common ones for Andhra Pradesh (`AD`, not `AP`) and Uttarakhand (`UK`, not `UT`). The SDK accepts either form, or the GST prefix (`"23"` and `"MP"` are both Madhya Pradesh), and sends Zoho's code. Retired prefixes 25 and 28 are refused for new data but accepted on old GSTINs.
 
 ```ts
 const invoice = await books.gst.createInvoice(
@@ -123,7 +135,7 @@ Prefer to see the payload before sending? Use `books.gst.prepareInvoice(...)`. I
 These also work in the browser through the `zoho-books-sdk/gst` sub-path:
 
 ```ts
-import { parseGstin, validateHsnOrSac, computeGst, determineSupplyType, toPlaceOfSupply } from 'zoho-books-sdk/gst';
+import { parseGstin, validateHsnOrSac, computeGst, determineSupplyType, toPlaceOfSupply, validateBillingProfile, toZohoDate } from 'zoho-books-sdk/gst';
 
 parseGstin('27AAPFU0939F1ZV');
 // { valid: true, state: { code: 'MH', name: 'Maharashtra', ... }, pan: 'AAPFU0939F', kind: 'regular' }
@@ -132,7 +144,14 @@ determineSupplyType({ homeState: 'KA', placeOfSupply: 'MH' }); // 'inter'
 
 computeGst([{ quantity: 2, rate: 499.5, gstRate: 18 }], { supplyType: 'intra', roundToRupee: true });
 // { taxableValue: 999, cgst: 89.91, sgst: 89.91, igst: 0, total: 1178.82, roundOff: 0.18, grandTotal: 1179, lines: [...] }
+
+validateBillingProfile({ kind: 'business', legalName: 'Acme', gstin: '27AAPFU0939F1ZV', state: 'KA' });
+// ['address is required', ..., 'gstin belongs to Maharashtra, but state is Karnataka']
+
+toZohoDate(new Date('2026-10-31T19:00:00Z')); // '2026-11-01', the India date, not the UTC one
 ```
+
+Always date invoices and payments with `toZohoDate`. A UTC date puts payments made between midnight and 05:30 IST on the previous day, and at a month end in the previous GST return period.
 
 ### E-invoicing (IRN)
 
@@ -153,6 +172,55 @@ await books.creditNotes.einvoice.push(creditNoteId);
 ```
 
 E-way bills and GST return filing are UI-only in Zoho Books. The API doesn't expose them.
+
+On an e-invoicing org, Zoho refuses to email a B2B invoice until it has been pushed to the IRP ("has not been e-Invoiced. Push it to the IRP to proceed"). Push only after the payment is recorded and the totals are verified, so a wrong invoice is never registered. Consumer invoices are not e-invoiced.
+
+## Invoicing a paid order end to end
+
+`InvoiceWorkflow` runs the whole flow for one paid order: contact, invoice, payment, IRP push and email. It saves Zoho's ids after every step, so a crash resumes instead of creating duplicates.
+
+```ts
+import { InvoiceWorkflow, nextRetryAt } from 'zoho-books-sdk';
+
+const workflow = new InvoiceWorkflow(books, {
+  einvoicing: true,                         // push B2B invoices to the IRP before emailing
+  save: (state) => db.orders.update(orderId, { zoho: state }),
+  holdRules: [(order) => (knownSku(order) ? undefined : 'unknown product')],
+});
+
+const outcome = await workflow.run(
+  {
+    reference: 'ORD-1042',                  // sent as reference_number
+    paidAt: payment.createdAt,
+    currency: payment.currency,
+    profile: { kind: 'business', legalName: 'Acme Pvt Ltd', email: 'ap@acme.in', gstin: '27AAPFU0939F1ZV', address: '1 Road', city: 'Pune', state: 'MH', pin: '411001' },
+    lines: [{ name: 'Credits', quantity: 1, unitAmountMinor: 100000, gstRate: 18, hsnOrSac: '998314' }],
+    capturedMinor: 118000,                  // what the gateway took, in paise
+    payment: { reference: payment.id, mode: 'creditcard', depositAccountId: '460000000000123' },
+  },
+  savedState,                               // ids from an earlier attempt, if any
+);
+```
+
+What it does for you:
+- **Holds** orders that shouldn't be invoiced automatically: non-INR currency, overseas customers without `exportMode`, billing profiles that fail GST Rule 46, and your own `holdRules`.
+- **Finds an earlier attempt** by your order reference. Zoho's filter isn't exact, so only an exact `reference_number` match is adopted.
+- **Reuses a contact found by email**, and always updates it with the profile's current GST details. A profile with `systemGenerated: true` never adopts a contact by email, so it can't overwrite one your accountant set up with a GSTIN.
+- **Checks the total** before recording money. Zoho recomputes tax per line, so a gap of up to ₹0.05 is settled at Zoho's figure. A bigger gap records nothing and returns `review`.
+- **Skips the payment** if the invoice is already paid.
+- **Handles a refused second IRP push** (for example after a crash between push and email): if the email then goes through, the invoice was already registered.
+
+`outcome.status` is one of:
+
+| Status | Meaning |
+|---|---|
+| `done` | Finished. |
+| `held` | Needs a person. `reason` says why. |
+| `review` | Zoho's total differs from the captured amount. Nothing was recorded; alert someone. |
+| `retry` | Failed. Count an attempt and schedule `nextRetryAt(attempts)`: 2, 10, 60, 360, then 1440 minutes, then stop and alert. An admin retry resets the count. |
+| `rate_limited` | Zoho's limit. Don't count an attempt, and stop the batch. |
+
+For legacy orders that only have a gross total, set `inclusiveOfTax: true` and use the total as the line amount; Zoho derives the tax.
 
 ## Pagination
 
@@ -196,12 +264,23 @@ try {
 | `ZohoNetworkError` / `ZohoTimeoutError` | No response received |
 | `ZohoOAuthError` | Token endpoint failure (`oauthError: 'invalid_code'`, ...) |
 | `ZohoGstError` | Local GST validation failed; no request was sent |
+| `ZohoNoRecordError` | Zoho reported success but returned no record or id |
 | `ZohoConfigError` | Invalid usage caught before any request, such as an empty id or an endpoint the module lacks |
 
 All of them extend `ZohoBooksError` and carry `status`, `code`, `method`, `path`, `body` and `headers`.
 
+Prefer results to exceptions in a job runner? Wrap any call in `settle`:
+
+```ts
+import { settle } from 'zoho-books-sdk';
+
+const res = await settle(books.invoices.get(id));
+if (!res.success) console.log(res.code); // NETWORK, RATE_LIMITED, UNAUTHORIZED, INVALID_CREDENTIALS, ZOHO_1002, ZOHO_NO_ID, ...
+```
+
 ## Retries, rate limits and idempotency
 
+- Every request has a 20 s timeout by default (`timeoutMs` changes it).
 - GET, PUT and DELETE are retried on 5xx, network errors and timeouts, using exponential backoff with full jitter (default 3 retries).
 - **POST is not retried after a 5xx or timeout.** Zoho has no idempotency keys, so a retry could create a duplicate invoice. Pass `idempotent: true` to `books.request()` for POSTs you know are safe.
 - 429s are always retried, because Zoho rejects them before processing. The exception is the **daily quota** (code 45), which fails fast.
@@ -225,19 +304,19 @@ await books.invoices.upsertByCustomField('cf_order_id', 'ORD-1042', invoiceData,
 
 ## Multi-instance deployments (k8s, serverless)
 
-Zoho allows only **10 access tokens per 10 minutes, and 15 active, per refresh token**. Within a single process the SDK never refreshes twice at once. Across replicas, share one token store, ideally with a lock:
+Zoho allows only **10 access tokens per 10 minutes, and 15 active, per refresh token**, so several processes starting together can lock you out. Within a single process the SDK never refreshes twice at once. Across replicas, share the token through a cache with `cacheTokenStore`. One process takes a lock (SET NX EX, 30 s) and refreshes. The others wait, then reuse its token, and refresh themselves if the holder failed. If the cache is down, the SDK refreshes anyway rather than stopping.
 
 ```ts
-import type { TokenStore } from 'zoho-books-sdk';
+import { cacheTokenStore } from 'zoho-books-sdk';
 
-const redisStore: TokenStore = {
-  get: async (k) => JSON.parse((await redis.get(k)) ?? 'null') ?? undefined,
-  set: async (k, t) => void (await redis.set(k, JSON.stringify(t), 'PXAT', t.expiresAt)),
-  delete: async (k) => void (await redis.del(k)),
-  withLock: async (k, fn) => withRedisLock(`${k}:lock`, 10_000, fn), // e.g. SET NX PX
-};
+const tokenStore = cacheTokenStore({
+  get: (k) => redis.get(k),
+  set: (k, v, ttl) => redis.set(k, v, 'EX', ttl),
+  setIfAbsent: async (k, v, ttl) => (await redis.set(k, v, 'EX', ttl, 'NX')) === 'OK',
+  delete: (k) => redis.del(k),
+});
 
-new ZohoBooks({ ..., tokenStore: redisStore });
+new ZohoBooks({ ..., tokenStore });
 ```
 
 ## Multiple organizations

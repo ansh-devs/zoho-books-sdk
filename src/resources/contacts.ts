@@ -23,6 +23,15 @@ export class ContactsResource extends CrudResource<Contact, ContactInput, Contac
     return this.list({ ...params, contact_type: 'vendor' }, opts);
   }
 
+  /** Contact whose email equals this one, ignoring case. Zoho's filter also returns partial matches. */
+  async findByEmail(email: string, opts?: CallOptions): Promise<Contact | undefined> {
+    const target = email.trim().toLowerCase();
+    for await (const c of this.iterate({ email: target }, { ...opts, limit: 200 })) {
+      if (typeof c.email === 'string' && c.email.toLowerCase() === target) return c;
+    }
+    return undefined;
+  }
+
   /** First contact with this GSTIN. */
   async findByGstin(gstin: string, opts?: CallOptions): Promise<Contact | undefined> {
     const target = gstin.trim().toUpperCase();
