@@ -17,8 +17,8 @@
     "noEmit": true,
     "types": ["node"],
     "paths": {
-      "zoho-books-sdk": ["./src/index.ts"],
-      "zoho-books-sdk/gst": ["./src/gst/index.ts"]
+      "@ansh-devs/zoho-books-sdk": ["./src/index.ts"],
+      "@ansh-devs/zoho-books-sdk/gst": ["./src/gst/index.ts"]
     }
   },
   "include": ["src", "test", "examples", "tsup.config.ts", "vitest.config.ts"]

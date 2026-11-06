@@ -1,6 +1,6 @@
 /** Create a GST invoice, push it to the IRP and save the PDF. Reads credentials from ZOHO_* variables. */
 import { writeFile } from 'node:fs/promises';
-import { ZohoBooks, ZohoGstError, ZohoRateLimitError } from 'zoho-books-sdk';
+import { ZohoBooks, ZohoGstError, ZohoRateLimitError } from '@ansh-devs/zoho-books-sdk';
 
 const books = ZohoBooks.fromEnv({ gst: { requireHsn: true, validateHsn: { minDigits: 6 } } });
 
