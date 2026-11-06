@@ -1,21 +1,46 @@
-import type { BinaryResponse, CallOptions, Query } from '../http/types.js';
-import type { Address, Comment, EmailInput } from '../types/common.js';
-import { CrudResource, type ListParams, type ZohoEnvelope } from './base.js';
+import { ZohoConfigError } from '../errors.js';
+import type { HttpClient } from '../http/http-client.js';
+import type { BinaryResponse, CallOptions } from '../http/types.js';
+import type { Address, Comment, CommonListParams, EmailInput } from '../types/common.js';
+import { CrudResource, type ResourceConfig, type ZohoEnvelope } from './base.js';
 
 export type UploadFile = Blob | Uint8Array | ArrayBuffer;
 
-export interface UpsertOptions {
-  /** Create the record when no match is found (sends `X-Upsert: true`). */
-  upsert?: boolean;
-}
-
-/**
- * Bulk-result envelope: Zoho returns HTTP 200 with per-id failures in `errors`.
- * Exposed as-is so callers can act on partial success.
- */
+/** Bulk calls return HTTP 200 with failures per id in errors. */
 export interface BulkResult extends ZohoEnvelope {
   errors?: Array<{ code: number; message: string; ids?: string[] }>;
 }
+
+export interface AttachmentOptions extends CallOptions {
+  contentType?: string;
+  canSendInEmail?: boolean;
+}
+
+export interface UpsertOptions extends CallOptions {
+  /** Create the record when no match is found. */
+  upsert?: boolean;
+}
+
+/** Document endpoints that only some modules have. Every module has pdf. */
+export type DocMethod =
+  | 'bulkPdf'
+  | 'email'
+  | 'getEmailContent'
+  | 'submit'
+  | 'approve'
+  | 'updateBillingAddress'
+  | 'updateShippingAddress'
+  | 'listComments'
+  | 'addComment'
+  | 'deleteComment'
+  | 'addAttachment'
+  | 'getAttachment'
+  | 'deleteAttachment'
+  | 'upsertByCustomField'
+  | 'deleteMany';
+
+/** Resource type without the document methods its module lacks. */
+export type WithOnly<R, M extends DocMethod> = Omit<R, Exclude<DocMethod, M>>;
 
 export function toBlob(file: UploadFile, contentType?: string): Blob {
   if (file instanceof Blob) return file;
@@ -29,132 +54,119 @@ export function chunk<T>(arr: readonly T[], size: number): T[][] {
   return out;
 }
 
-/**
- * Transactions (invoices, estimates, sales orders, credit notes, bills...)
- * share a set of sub-resources: PDF, email, comments, attachments,
- * approvals, address updates and custom-field upserts.
- */
+/** Transactions such as invoices and bills. Each module lists the document endpoints Zoho gives it. */
 export class DocumentResource<
   T,
   TCreate = Partial<T>,
   TUpdate = Partial<TCreate>,
-  TListParams extends ListParams = ListParams,
+  TListParams extends object = CommonListParams,
 > extends CrudResource<T, TCreate, TUpdate, TListParams> {
-  /** Download the document as a PDF. */
-  pdf(id: string, opts?: CallOptions): Promise<BinaryResponse> {
+  private readonly supported: ReadonlySet<DocMethod>;
+
+  constructor(http: HttpClient, config: ResourceConfig, supported: readonly DocMethod[]) {
+    super(http, config);
+    this.supported = new Set(supported);
+  }
+
+  private need(method: DocMethod): void {
+    if (!this.supported.has(method)) {
+      throw new ZohoConfigError(`Zoho Books has no ${method} endpoint for ${this.config.path}`);
+    }
+  }
+
+  /** Download as PDF. */
+  async pdf(id: string, opts?: CallOptions): Promise<BinaryResponse> {
     return this.binary(this.url(id), { accept: 'pdf' }, 'application/pdf', opts);
   }
 
-  /** Get the rendered HTML/print view. */
-  print(id: string, opts?: CallOptions): Promise<BinaryResponse> {
-    return this.binary(this.url(id), { print: true, accept: 'pdf' }, 'application/pdf', opts);
-  }
-
-  /** Bulk PDF export (Zoho allows 25 ids per call; larger lists are chunked). */
+  /** Bulk PDF export. Zoho takes 25 ids per call, so larger lists are split. */
   async bulkPdf(ids: string[], opts?: CallOptions): Promise<BinaryResponse[]> {
-    const idKey = `${this.config.singular}_ids`;
+    this.need('bulkPdf');
     const out: BinaryResponse[] = [];
     for (const group of chunk(ids, 25)) {
-      out.push(await this.binary(this.url('pdf'), { [idKey]: group.join(',') }, 'application/pdf', opts));
+      out.push(await this.binary(this.url('pdf'), { [`${this.config.singular}_ids`]: group.join(',') }, 'application/pdf', opts));
     }
     return out;
   }
 
-  /** Email the document. */
-  async email(id: string, input: EmailInput, query?: Query, opts?: CallOptions): Promise<string> {
-    const res = await this.call('POST', this.url(id, 'email'), { body: input, query }, opts);
+  async email(id: string, input: EmailInput, opts?: CallOptions): Promise<string> {
+    this.need('email');
+    const res = await this.call('POST', this.url(id, 'email'), { body: input }, opts);
     return res.message;
   }
 
-  /** Get the default email subject/body/recipients Zoho would use. */
-  async getEmailContent(id: string, query?: Query, opts?: CallOptions): Promise<Record<string, unknown>> {
-    const res = await this.call<Record<string, unknown>>('GET', this.url(id, 'email'), { query }, opts);
+  /** Subject, body and recipients Zoho would use by default. */
+  async getEmailContent(id: string, opts?: CallOptions): Promise<Record<string, unknown>> {
+    this.need('getEmailContent');
+    const res = await this.call<Record<string, unknown>>('GET', this.url(id, 'email'), {}, opts);
     return (res.data as Record<string, unknown> | undefined) ?? res;
   }
 
-  submit(id: string, opts?: CallOptions): Promise<string> {
+  async submit(id: string, opts?: CallOptions): Promise<string> {
+    this.need('submit');
     return this.action(id, ['submit'], {}, opts);
   }
 
-  approve(id: string, opts?: CallOptions): Promise<string> {
+  async approve(id: string, opts?: CallOptions): Promise<string> {
+    this.need('approve');
     return this.action(id, ['approve'], {}, opts);
   }
 
-  updateBillingAddress(id: string, address: Address, opts?: CallOptions): Promise<string> {
+  async updateBillingAddress(id: string, address: Address, opts?: CallOptions): Promise<string> {
+    this.need('updateBillingAddress');
     return this.action(id, ['address', 'billing'], { body: address }, opts, 'PUT');
   }
 
-  updateShippingAddress(id: string, address: Address, opts?: CallOptions): Promise<string> {
+  async updateShippingAddress(id: string, address: Address, opts?: CallOptions): Promise<string> {
+    this.need('updateShippingAddress');
     return this.action(id, ['address', 'shipping'], { body: address }, opts, 'PUT');
   }
 
-  // ── comments ──
-
   async listComments(id: string, opts?: CallOptions): Promise<Comment[]> {
+    this.need('listComments');
     const res = await this.call<Record<string, unknown>>('GET', this.url(id, 'comments'), {}, opts);
     return (res.comments as Comment[] | undefined) ?? [];
   }
 
-  async addComment(id: string, description: string, extra?: Record<string, unknown>, opts?: CallOptions): Promise<Comment> {
-    const res = await this.call<Record<string, unknown>>('POST', this.url(id, 'comments'), { body: { description, ...extra } }, opts);
-    return (res.comment as Comment | undefined) ?? (res as unknown as Comment);
+  async addComment(id: string, description: string, opts?: CallOptions): Promise<Comment> {
+    this.need('addComment');
+    return this.one<Comment>('POST', this.url(id, 'comments'), { body: { description } }, opts, 'comment');
   }
 
   async deleteComment(id: string, commentId: string, opts?: CallOptions): Promise<void> {
+    this.need('deleteComment');
     await this.call('DELETE', this.url(id, 'comments', commentId), {}, opts);
   }
 
-  // ── attachments ──
-
-  /** Attach a file (multipart field `attachment`). */
-  async addAttachment(
-    id: string,
-    file: UploadFile,
-    filename: string,
-    options: { contentType?: string; canSendInEmail?: boolean } = {},
-    opts?: CallOptions,
-  ): Promise<ZohoEnvelope> {
+  /** Attach a file, sent as the multipart field attachment. */
+  async addAttachment(id: string, file: UploadFile, filename: string, opts: AttachmentOptions = {}): Promise<ZohoEnvelope> {
+    this.need('addAttachment');
+    const { contentType, canSendInEmail, ...callOpts } = opts;
     const form = new FormData();
-    form.append('attachment', toBlob(file, options.contentType), filename);
-    const query = options.canSendInEmail !== undefined ? { can_send_in_mail: options.canSendInEmail } : undefined;
-    return this.upload(this.url(id, 'attachment'), form, query, opts);
+    form.append('attachment', toBlob(file, contentType), filename);
+    const query = canSendInEmail !== undefined ? { can_send_in_mail: canSendInEmail } : undefined;
+    return this.upload(this.url(id, 'attachment'), form, query, callOpts);
   }
 
-  /** Download the most recent attachment. */
-  getAttachment(id: string, opts?: CallOptions): Promise<BinaryResponse> {
+  /** Download the latest attachment. */
+  async getAttachment(id: string, opts?: CallOptions): Promise<BinaryResponse> {
+    this.need('getAttachment');
     return this.binary(this.url(id, 'attachment'), undefined, '*/*', opts);
   }
 
   async deleteAttachment(id: string, opts?: CallOptions): Promise<void> {
+    this.need('deleteAttachment');
     await this.call('DELETE', this.url(id, 'attachment'), {}, opts);
   }
 
-  // ── upsert ──
-
-  /**
-   * Update (or create, with `upsert: true`) a record identified by a unique
-   * custom field instead of its Zoho id — the only documented safe-retry
-   * mechanism, ideal for syncing from an external system.
-   */
-  upsertByCustomField(
-    apiName: string,
-    value: string,
-    data: TCreate,
-    options: UpsertOptions = {},
-    opts?: CallOptions,
-  ): Promise<T> {
-    const headers: Record<string, string> = {
-      'X-Unique-Identifier-Key': apiName,
-      'X-Unique-Identifier-Value': value,
-      ...(options.upsert ? { 'X-Upsert': 'true' } : {}),
-      ...opts?.headers,
-    };
-    return this.one<T>('PUT', this.url(), { body: data }, { ...opts, headers });
+  /** Update by a unique custom field instead of the id. The only documented safe way to retry a write. */
+  async upsertByCustomField(apiName: string, value: string, data: TCreate, opts?: UpsertOptions): Promise<T> {
+    this.need('upsertByCustomField');
+    return this.upsert<T>(apiName, value, data, opts);
   }
 
-  /** Bulk delete by ids. */
   async deleteMany(ids: string[], opts?: CallOptions): Promise<BulkResult> {
-    const idKey = `${this.config.singular}_ids`;
-    return this.call<BulkResult>('DELETE', this.url(), { query: { [idKey]: ids.join(',') } }, opts);
+    this.need('deleteMany');
+    return this.call<BulkResult>('DELETE', '/' + this.config.path, { query: { [`${this.config.singular}_ids`]: ids.join(',') } }, opts);
   }
 }

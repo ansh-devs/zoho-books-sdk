@@ -1,19 +1,10 @@
-/**
- * Zoho runs isolated data centers. An organization lives in exactly one, and
- * both the OAuth server and the API host must belong to that DC.
- */
-
-/**
- * Books data centers. `ae` and `sa` are GCC; `ca` uses `zohocloud.ca` for its
- * accounts server. `uk` is listed by Zoho Accounts `/oauth/serverinfo` but is
- * not (yet) listed as a Books DC — kept for forward compatibility.
- */
+/** Zoho data centers. Canada uses accounts.zohocloud.ca; uk is listed by Zoho Accounts but not yet by Books. */
 export type DataCenter = 'us' | 'eu' | 'in' | 'au' | 'jp' | 'ca' | 'cn' | 'sa' | 'ae' | 'uk';
 
 export interface DataCenterEndpoints {
-  /** OAuth server, e.g. `https://accounts.zoho.in`. */
+  /** OAuth server, e.g. https://accounts.zoho.in */
   accountsUrl: string;
-  /** API domain, e.g. `https://www.zohoapis.in`. */
+  /** API domain, e.g. https://www.zohoapis.in */
   apiDomain: string;
 }
 
@@ -30,22 +21,19 @@ export const DATA_CENTERS: Readonly<Record<DataCenter, DataCenterEndpoints>> = O
   uk: { accountsUrl: 'https://accounts.zoho.uk', apiDomain: 'https://www.zohoapis.uk' },
 });
 
-/** Path of the Books v3 API under the API domain. */
+/** Books v3 path under the API domain. */
 export const BOOKS_API_PATH = '/books/v3';
 
+/** Endpoints for a data center. Throws on an unknown one instead of falling back to us. */
 export function resolveDataCenter(dc: DataCenter | undefined): DataCenterEndpoints {
   const ep = DATA_CENTERS[dc ?? 'us'];
   if (!ep) {
-    // Never silently fall back to `.com`: a wrong DC yields confusing `invalid_code` errors.
     throw new TypeError(`Unknown Zoho data center "${String(dc)}". Expected one of: ${Object.keys(DATA_CENTERS).join(', ')}`);
   }
   return ep;
 }
 
-/**
- * Infer the data center from an accounts-server URL or an `api_domain`
- * (as returned by the token endpoint). Returns `undefined` when unknown.
- */
+/** Data center of an accounts URL or api_domain, or undefined. */
 export function dataCenterFromUrl(url: string): DataCenter | undefined {
   let host: string;
   try {

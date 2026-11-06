@@ -7,42 +7,39 @@ export type Query = Record<string, QueryValue>;
 
 export interface RequestOptions {
   method: HttpMethod;
-  /** Path relative to `/books/v3`, e.g. `/invoices/123`. */
+  /** Path relative to /books/v3, e.g. /invoices/123 */
   path: string;
   query?: Query | undefined;
-  /** JSON body. Mutually exclusive with `formData`. */
+  /** JSON body. */
   body?: unknown;
-  /** Multipart body (attachments, imports). */
+  /** Multipart body for uploads. */
   formData?: FormData | undefined;
-  /** How to read the response. Default `json`. */
+  /** json (default) or binary for files. */
   responseType?: 'json' | 'binary' | undefined;
-  /** Extra headers (e.g. `Accept: application/pdf`). */
   headers?: Record<string, string> | undefined;
-  /** Override the client's organization id for this call. */
+  /** Organization for this call instead of the client default. */
   organizationId?: string | undefined;
-  /** Per-call abort signal. */
   signal?: AbortSignal | undefined;
-  /** Per-call timeout override (ms). */
   timeoutMs?: number | undefined;
-  /**
-   * Mark a POST as safe to retry after 5xx/timeouts (it is always retried on
-   * 429, which Zoho returns before processing). Default: false for POST.
-   */
+  /** Allow retrying a POST after 5xx or timeout. 429 is always retried. */
   idempotent?: boolean | undefined;
 }
 
-/** Per-call options accepted by every resource method. */
+/** Options accepted as the last argument of every resource method. */
 export interface CallOptions {
+  /** Organization for this call instead of the client default. */
   organizationId?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
   headers?: Record<string, string>;
+  /** Extra query parameters the typed method does not cover. */
+  query?: Query;
 }
 
 export interface BinaryResponse {
   data: Uint8Array;
   contentType: string | undefined;
-  /** Filename from `Content-Disposition`, if present. */
+  /** Filename from Content Disposition, if sent. */
   filename: string | undefined;
 }
 

@@ -111,7 +111,7 @@ ZohoBooks (client.ts)
 - E-invoicing for invoices and credit notes; `canCancelIrn()` 24 h guard.
 - GST toolkit and `books.gst.createInvoice()` / `createCreditNote()`.
 - Webhook signature verification.
-- 71 unit tests against a scripted fetch (no network); package checks with `publint` + `attw`.
+- 88 unit tests against a scripted fetch (no network), including one regression test per audit finding; package checks with `publint` + `attw`.
 
 ## 6. Roadmap
 

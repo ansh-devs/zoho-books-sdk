@@ -1,4 +1,4 @@
-/** `page_context` block returned by Zoho list endpoints. */
+/** page_context block of a Zoho list response. */
 export interface PageContext {
   page: number;
   per_page: number;
@@ -16,29 +16,19 @@ export interface ListResult<T> {
   hasMore: boolean;
 }
 
-export interface PaginationParams {
-  /** 1-based page number. */
-  page?: number;
-  /** Records per page (Zoho max is 200). */
-  per_page?: number;
-}
-
 export interface IterateOptions {
-  /** Stop after yielding this many records. */
+  /** Stop after this many records. */
   limit?: number;
-  /** Page size used while iterating. Default 200 (Zoho's max). */
+  /** Page size while iterating. Default and max is 200. */
   pageSize?: number;
 }
 
 export const MAX_PAGE_SIZE = 200;
 
-/**
- * Generic auto-paginator: keeps fetching pages until `has_more_page` is
- * false or `limit` records were produced.
- */
+/** Fetch pages until has_more_page is false or limit records were yielded. */
 export async function* paginate<T>(
   fetchPage: (page: number, perPage: number) => Promise<ListResult<T>>,
-  options: IterateOptions & { startPage?: number } = {},
+  options: IterateOptions & { startPage?: number | undefined } = {},
 ): AsyncGenerator<T, void, undefined> {
   const perPage = Math.min(MAX_PAGE_SIZE, Math.max(1, options.pageSize ?? MAX_PAGE_SIZE));
   let page = options.startPage ?? 1;

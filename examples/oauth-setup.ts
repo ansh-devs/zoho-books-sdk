@@ -1,8 +1,4 @@
-/**
- * One-time helper to mint a refresh token.
- *   1. node --experimental-strip-types examples/oauth-setup.ts            → prints consent URL
- *   2. node --experimental-strip-types examples/oauth-setup.ts <code>     → prints refresh token + orgs
- */
+/** Run without arguments to print the consent URL, then with the returned code to print the refresh token and orgs. */
 import { ZohoBooks, ZohoOAuth, Scopes, type DataCenter } from 'zoho-books-sdk';
 
 const dataCenter = (process.env.ZOHO_DATA_CENTER ?? 'in') as DataCenter;

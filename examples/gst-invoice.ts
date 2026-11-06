@@ -1,10 +1,4 @@
-/**
- * Create a GST-compliant invoice, push it to the IRP and download the PDF.
- *
- *   ZOHO_CLIENT_ID=... ZOHO_CLIENT_SECRET=... ZOHO_REFRESH_TOKEN=... \
- *   ZOHO_ORGANIZATION_ID=... ZOHO_DATA_CENTER=in CUSTOMER_ID=... \
- *   node --experimental-strip-types examples/gst-invoice.ts
- */
+/** Create a GST invoice, push it to the IRP and save the PDF. Reads credentials from ZOHO_* variables. */
 import { writeFile } from 'node:fs/promises';
 import { ZohoBooks, ZohoGstError, ZohoRateLimitError } from 'zoho-books-sdk';
 

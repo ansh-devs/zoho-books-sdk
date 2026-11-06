@@ -1,5 +1,5 @@
 import type { HttpClient } from '../http/http-client.js';
-import type { CallOptions, Query } from '../http/types.js';
+import type { CallOptions } from '../http/types.js';
 import type { ListResult } from '../pagination.js';
 import type { CommonListParams } from '../types/common.js';
 import type {
@@ -23,77 +23,123 @@ import type {
   SalesReceipt,
   SalesReceiptInput,
 } from '../types/models.js';
-import { CrudResource, type ZohoEnvelope } from './base.js';
-import { DocumentResource } from './document.js';
+import { CrudResource, type IterateCallOptions, type ZohoEnvelope } from './base.js';
+import { DocumentResource, type WithOnly } from './document.js';
 import { EInvoiceApi } from './einvoice.js';
-import { normalizeCreateQuery, type CreateInvoiceOptions } from './invoices.js';
+import { withCreateFlags, type CreateOptions } from './invoices.js';
 
-export class EstimatesResource extends DocumentResource<Estimate, EstimateInput, EstimateInput, CommonListParams> {
+const ESTIMATE_METHODS = [
+  'bulkPdf',
+  'email',
+  'getEmailContent',
+  'submit',
+  'approve',
+  'updateBillingAddress',
+  'updateShippingAddress',
+  'listComments',
+  'addComment',
+  'deleteComment',
+  'upsertByCustomField',
+] as const;
+
+export class EstimatesResource extends DocumentResource<Estimate, EstimateInput, EstimateInput> {
   constructor(http: HttpClient) {
-    super(http, { path: 'estimates', singular: 'estimate', plural: 'estimates' });
+    super(http, { path: 'estimates', singular: 'estimate', plural: 'estimates' }, ESTIMATE_METHODS);
   }
-  override create(data: EstimateInput, query?: Query | CreateInvoiceOptions, opts?: CallOptions): Promise<Estimate> {
-    return super.create(data, normalizeCreateQuery(query), opts);
+  override async create(data: EstimateInput, opts?: CreateOptions): Promise<Estimate> {
+    return super.create(data, withCreateFlags(opts));
   }
-  markSent(id: string, opts?: CallOptions): Promise<string> {
+  async markSent(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'sent'], {}, opts);
   }
-  markAccepted(id: string, opts?: CallOptions): Promise<string> {
+  async markAccepted(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'accepted'], {}, opts);
   }
-  markDeclined(id: string, opts?: CallOptions): Promise<string> {
+  async markDeclined(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'declined'], {}, opts);
   }
 }
+export type EstimatesApi = WithOnly<EstimatesResource, (typeof ESTIMATE_METHODS)[number]>;
 
-export class SalesOrdersResource extends DocumentResource<SalesOrder, SalesOrderInput, SalesOrderInput, CommonListParams> {
+const SALES_ORDER_METHODS = [
+  'bulkPdf',
+  'email',
+  'getEmailContent',
+  'submit',
+  'approve',
+  'updateBillingAddress',
+  'updateShippingAddress',
+  'listComments',
+  'addComment',
+  'deleteComment',
+  'addAttachment',
+  'getAttachment',
+  'deleteAttachment',
+  'upsertByCustomField',
+] as const;
+
+export class SalesOrdersResource extends DocumentResource<SalesOrder, SalesOrderInput, SalesOrderInput> {
   constructor(http: HttpClient) {
-    super(http, { path: 'salesorders', singular: 'salesorder', plural: 'salesorders' });
+    super(http, { path: 'salesorders', singular: 'salesorder', plural: 'salesorders' }, SALES_ORDER_METHODS);
   }
-  override create(data: SalesOrderInput, query?: Query | CreateInvoiceOptions, opts?: CallOptions): Promise<SalesOrder> {
-    return super.create(data, normalizeCreateQuery(query), opts);
+  override async create(data: SalesOrderInput, opts?: CreateOptions): Promise<SalesOrder> {
+    return super.create(data, withCreateFlags(opts));
   }
-  markOpen(id: string, opts?: CallOptions): Promise<string> {
+  async markOpen(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'open'], {}, opts);
   }
-  markVoid(id: string, reason?: string, opts?: CallOptions): Promise<string> {
+  async markVoid(id: string, reason?: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'void'], reason ? { body: { reason } } : {}, opts);
   }
 }
+export type SalesOrdersApi = WithOnly<SalesOrdersResource, (typeof SALES_ORDER_METHODS)[number]>;
 
-export class CreditNotesResource extends DocumentResource<CreditNote, CreditNoteInput, CreditNoteInput, CommonListParams> {
-  /** India IRP / UAE e-invoicing for credit notes. */
+const CREDIT_NOTE_METHODS = [
+  'email',
+  'getEmailContent',
+  'submit',
+  'approve',
+  'updateBillingAddress',
+  'updateShippingAddress',
+  'listComments',
+  'addComment',
+  'deleteComment',
+  'addAttachment',
+  'upsertByCustomField',
+] as const;
+
+export interface CreateCreditNoteOptions extends CreateOptions {
+  /** Raise the credit note against this invoice. */
+  invoiceId?: string;
+}
+
+export class CreditNotesResource extends DocumentResource<CreditNote, CreditNoteInput, CreditNoteInput> {
+  /** India IRP and UAE e invoicing. */
   readonly einvoice: EInvoiceApi;
 
   constructor(http: HttpClient) {
-    super(http, { path: 'creditnotes', singular: 'creditnote', plural: 'creditnotes' });
+    super(http, { path: 'creditnotes', singular: 'creditnote', plural: 'creditnotes' }, CREDIT_NOTE_METHODS);
     this.einvoice = new EInvoiceApi(http, 'creditnotes', 'creditnote_ids');
   }
 
-  /** Create a credit note, optionally against an invoice (`invoiceId`). */
-  override create(
-    data: CreditNoteInput,
-    query?: Query | (CreateInvoiceOptions & { invoiceId?: string }),
-    opts?: CallOptions,
-  ): Promise<CreditNote> {
-    const q = normalizeCreateQuery(query) ?? {};
-    if (query && 'invoiceId' in query && query.invoiceId) q.invoice_id = query.invoiceId as string;
-    delete (q as Record<string, unknown>).invoiceId;
-    return super.create(data, q, opts);
+  override async create(data: CreditNoteInput, opts: CreateCreditNoteOptions = {}): Promise<CreditNote> {
+    const { invoiceId, ...rest } = opts;
+    const callOpts = withCreateFlags(rest);
+    return super.create(data, invoiceId ? { ...callOpts, query: { ...callOpts.query, invoice_id: invoiceId } } : callOpts);
   }
 
-  markVoid(id: string, opts?: CallOptions): Promise<string> {
+  async markVoid(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'void'], {}, opts);
   }
-  markDraft(id: string, opts?: CallOptions): Promise<string> {
+  async markDraft(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'draft'], {}, opts);
   }
-  markOpen(id: string, opts?: CallOptions): Promise<string> {
+  async markOpen(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'open'], {}, opts);
   }
 
-  /** Apply the credit note to one or more invoices. */
-  applyToInvoices(id: string, invoices: Array<{ invoice_id: string; amount_applied: number }>, opts?: CallOptions): Promise<ZohoEnvelope> {
+  /** Apply the credit to invoices. */
+  async applyToInvoices(id: string, invoices: Array<{ invoice_id: string; amount_applied: number }>, opts?: CallOptions): Promise<ZohoEnvelope> {
     return this.call('POST', this.url(id, 'invoices'), { body: { invoices } }, opts);
   }
 
@@ -106,12 +152,12 @@ export class CreditNotesResource extends DocumentResource<CreditNote, CreditNote
     await this.call('DELETE', this.url(id, 'invoices', creditnoteInvoiceId), {}, opts);
   }
 
-  /** Refund the credit note balance to the customer. */
-  refund(id: string, refund: Refund, opts?: CallOptions): Promise<Refund> {
+  /** Refund the remaining credit to the customer. */
+  async refund(id: string, refund: Refund, opts?: CallOptions): Promise<Refund> {
     return this.one<Refund>('POST', this.url(id, 'refunds'), { body: refund }, opts, 'creditnote_refund');
   }
 
-  listRefunds(id: string, opts?: CallOptions): Promise<ListResult<Refund>> {
+  async listRefunds(id: string, opts?: CallOptions): Promise<ListResult<Refund>> {
     return this.listPage<Refund>(this.url(id, 'refunds'), 'creditnote_refunds', undefined, opts);
   }
 
@@ -119,49 +165,64 @@ export class CreditNotesResource extends DocumentResource<CreditNote, CreditNote
     await this.call('DELETE', this.url(id, 'refunds', refundId), {}, opts);
   }
 }
+export type CreditNotesApi = WithOnly<CreditNotesResource, (typeof CREDIT_NOTE_METHODS)[number]>;
 
-export class RecurringInvoicesResource extends CrudResource<RecurringInvoice, RecurringInvoiceInput, RecurringInvoiceInput, CommonListParams> {
+export class RecurringInvoicesResource extends CrudResource<RecurringInvoice, RecurringInvoiceInput, RecurringInvoiceInput> {
   constructor(http: HttpClient) {
     super(http, { path: 'recurringinvoices', singular: 'recurring_invoice', plural: 'recurring_invoices' });
   }
-  stop(id: string, opts?: CallOptions): Promise<string> {
+  async stop(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'stop'], {}, opts);
   }
-  resume(id: string, opts?: CallOptions): Promise<string> {
+  async resume(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'resume'], {}, opts);
   }
-  /** Invoices generated by this profile. */
-  listChildInvoices(id: string, opts?: CallOptions): Promise<ListResult<Invoice>> {
+  /** Invoices this profile generated. */
+  async listChildInvoices(id: string, opts?: CallOptions): Promise<ListResult<Invoice>> {
     return this.listPage<Invoice>(this.url(id, 'invoices'), 'invoice_history', undefined, opts);
   }
-  enableAutoBill(id: string, opts?: CallOptions): Promise<string> {
+  async enableAutoBill(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['autobill', 'enable'], {}, opts);
   }
-  disableAutoBill(id: string, opts?: CallOptions): Promise<string> {
+  async disableAutoBill(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['autobill', 'disable'], {}, opts);
   }
 }
 
-export class RetainerInvoicesResource extends DocumentResource<RetainerInvoice, RetainerInvoiceInput, RetainerInvoiceInput, CommonListParams> {
+const RETAINER_METHODS = [
+  'email',
+  'getEmailContent',
+  'submit',
+  'approve',
+  'updateBillingAddress',
+  'listComments',
+  'addComment',
+  'deleteComment',
+  'addAttachment',
+  'getAttachment',
+] as const;
+
+export class RetainerInvoicesResource extends DocumentResource<RetainerInvoice, RetainerInvoiceInput, RetainerInvoiceInput> {
   constructor(http: HttpClient) {
-    super(http, { path: 'retainerinvoices', singular: 'retainerinvoice', plural: 'retainerinvoices' });
+    super(http, { path: 'retainerinvoices', singular: 'retainerinvoice', plural: 'retainerinvoices' }, RETAINER_METHODS);
   }
-  markSent(id: string, opts?: CallOptions): Promise<string> {
+  async markSent(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'sent'], {}, opts);
   }
-  markVoid(id: string, opts?: CallOptions): Promise<string> {
+  async markVoid(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'void'], {}, opts);
   }
-  markDraft(id: string, opts?: CallOptions): Promise<string> {
+  async markDraft(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'draft'], {}, opts);
   }
   /** Apply retainer payments to invoices. */
-  applyToInvoices(id: string, invoices: Array<{ invoice_id: string; amount_applied: number }>, opts?: CallOptions): Promise<ZohoEnvelope> {
+  async applyToInvoices(id: string, invoices: Array<{ invoice_id: string; amount_applied: number }>, opts?: CallOptions): Promise<ZohoEnvelope> {
     return this.call('POST', this.url(id, 'invoices'), { body: { invoices } }, opts);
   }
 }
+export type RetainerInvoicesApi = WithOnly<RetainerInvoicesResource, (typeof RETAINER_METHODS)[number]>;
 
-export class SalesReceiptsResource extends CrudResource<SalesReceipt, SalesReceiptInput, SalesReceiptInput, CommonListParams> {
+export class SalesReceiptsResource extends CrudResource<SalesReceipt, SalesReceiptInput, SalesReceiptInput> {
   constructor(http: HttpClient) {
     super(http, { path: 'salesreceipts', singular: 'salesreceipt', plural: 'salesreceipts', aliases: ['sales_receipt', 'sales_receipts'] });
   }
@@ -171,41 +232,41 @@ export class SalesReceiptsResource extends CrudResource<SalesReceipt, SalesRecei
   }
 }
 
-/**
- * Customer debit notes live on the `/invoices` endpoint with
- * `type=debit_note`; this resource adds that discriminator for you.
- */
-export class DebitNotesResource extends CrudResource<Invoice, InvoiceInput, InvoiceInput, CommonListParams> {
+/** Customer debit notes live on /invoices with type debit_note, which this adds. */
+export class DebitNotesResource extends CrudResource<Invoice, InvoiceInput, InvoiceInput> {
   constructor(http: HttpClient) {
     super(http, { path: 'invoices', singular: 'invoice', plural: 'debit_notes', aliases: ['invoices'] });
   }
-  override list(params?: CommonListParams, opts?: CallOptions): Promise<ListResult<Invoice>> {
-    return super.list({ ...params, type: 'debit_note' }, opts);
+  override async list(params?: CommonListParams, opts?: CallOptions): Promise<ListResult<Invoice>> {
+    return super.list(params, { ...opts, query: { ...opts?.query, type: 'debit_note' } });
   }
-  override iterate(params?: CommonListParams, options?: Parameters<CrudResource<Invoice>['iterate']>[1], opts?: CallOptions) {
-    return super.iterate({ ...params, type: 'debit_note' }, options, opts);
+  override iterate(params?: CommonListParams, opts?: IterateCallOptions): AsyncGenerator<Invoice, void, undefined> {
+    return super.iterate(params, { ...opts, query: { ...opts?.query, type: 'debit_note' } });
   }
-  override create(data: InvoiceInput, query?: Query, opts?: CallOptions): Promise<Invoice> {
-    return super.create({ ...data, type: 'debit_note' }, query, opts);
+  override async create(data: InvoiceInput, opts?: CallOptions): Promise<Invoice> {
+    return this.one<Invoice>('POST', this.url(), { body: { ...data, type: 'debit_note' } }, opts);
   }
 }
 
-export class DeliveryChallansResource extends DocumentResource<DeliveryChallan, DeliveryChallanInput, DeliveryChallanInput, CommonListParams> {
+const CHALLAN_METHODS = ['updateShippingAddress', 'addAttachment'] as const;
+
+export class DeliveryChallansResource extends DocumentResource<DeliveryChallan, DeliveryChallanInput, DeliveryChallanInput> {
   constructor(http: HttpClient) {
-    super(http, { path: 'deliverychallans', singular: 'deliverychallan', plural: 'deliverychallans' });
+    super(http, { path: 'deliverychallans', singular: 'deliverychallan', plural: 'deliverychallans' }, CHALLAN_METHODS);
   }
-  markOpen(id: string, opts?: CallOptions): Promise<string> {
+  async markOpen(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'open'], {}, opts);
   }
-  markDelivered(id: string, opts?: CallOptions): Promise<string> {
+  async markDelivered(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'delivered'], {}, opts);
   }
-  markReturned(id: string, opts?: CallOptions): Promise<string> {
+  async markReturned(id: string, opts?: CallOptions): Promise<string> {
     return this.action(id, ['status', 'returned'], {}, opts);
   }
 }
+export type DeliveryChallansApi = WithOnly<DeliveryChallansResource, (typeof CHALLAN_METHODS)[number]>;
 
-export class CustomerPaymentsResource extends CrudResource<CustomerPayment, CustomerPaymentInput, CustomerPaymentInput, CommonListParams> {
+export class CustomerPaymentsResource extends CrudResource<CustomerPayment, CustomerPaymentInput, CustomerPaymentInput> {
   constructor(http: HttpClient) {
     super(http, {
       path: 'customerpayments',
@@ -215,12 +276,12 @@ export class CustomerPaymentsResource extends CrudResource<CustomerPayment, Cust
     });
   }
 
-  /** Refund an excess (unused) customer payment. */
-  refund(id: string, refund: Refund, opts?: CallOptions): Promise<Refund> {
+  /** Refund the unused part of a payment. */
+  async refund(id: string, refund: Refund, opts?: CallOptions): Promise<Refund> {
     return this.one<Refund>('POST', this.url(id, 'refunds'), { body: refund }, opts, 'payment_refund');
   }
 
-  listRefunds(id: string, opts?: CallOptions): Promise<ListResult<Refund>> {
+  async listRefunds(id: string, opts?: CallOptions): Promise<ListResult<Refund>> {
     return this.listPage<Refund>(this.url(id, 'refunds'), 'payment_refunds', undefined, opts);
   }
 

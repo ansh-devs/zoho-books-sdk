@@ -46,11 +46,17 @@ describe('response key drift tolerance', () => {
     expect(extractList({ code: 0, customer_payments: [1] }, ['customerpayments', 'customer_payments'])).toEqual([1]);
     expect(extractList({ code: 0, message: 'x', whatever: [2], page_context: {} }, ['nope'])).toEqual([2]);
   });
-  it('extractOne falls back to the flattened envelope', () => {
-    expect(extractOne({ code: 0, message: 'ok', account_id: 'a', account_name: 'Cash' }, ['chart_of_account'])).toEqual({
-      account_id: 'a',
-      account_name: 'Cash',
-    });
+  it('extractOne returns the flattened envelope only when the resource is flat', () => {
+    const flat = { code: 0, message: 'ok', account_id: 'a', account_name: 'Cash' };
+    expect(extractOne(flat, ['chart_of_account'], true)).toEqual({ account_id: 'a', account_name: 'Cash' });
+    expect(() => extractOne(flat, ['invoice'])).toThrow(/no "invoice" record/);
+    expect(extractOne({ code: 0, message: 'ok', invoice_v2: { invoice_id: '1' } }, ['invoice'])).toEqual({ invoice_id: '1' });
+  });
+
+  it('chart of accounts reads the flat record', async () => {
+    const m = mockFetch([json({ code: 0, message: 'ok', account_id: 'a', account_name: 'Cash' })]);
+    const acc = await testClient(m.fetch).chartOfAccounts.get('a');
+    expect(acc.account_name).toBe('Cash');
   });
   it('customer payments list works with either key', async () => {
     const m = mockFetch([json({ code: 0, message: 'ok', customerpayments: [{ payment_id: 'p1' }] })]);
