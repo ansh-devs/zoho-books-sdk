@@ -127,7 +127,8 @@ ZohoBooks (client.ts)
 
 - Package name `zoho-books-sdk` (unscoped, available at time of writing). Clearly marked **unofficial** in the README.
 - `npm run check` = typecheck + tests + build + `publint` + `attw`; it runs automatically on `prepublishOnly`.
-- `.github/workflows/release.yml` publishes on a `v*` tag with `npm publish --provenance` using an `NPM_TOKEN` secret.
+- `develop` is the default branch for development; `master` is production. Every push to `master` runs `.github/workflows/release.yml`, which publishes `package.json`'s version if npm doesn't have it yet, then tags it and creates a GitHub release.
+- Publishing uses npm trusted publishing (OIDC, no stored token) once configured on npmjs.com, with an `NPM_TOKEN` secret as the fallback for the first release.
 - SemVer; `CHANGELOG.md` per release.
 
 ## 8. Open questions / to verify against a live org
