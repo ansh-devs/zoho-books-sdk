@@ -127,8 +127,8 @@ ZohoBooks (client.ts)
 
 - Package name `zoho-books-sdk` (unscoped, available at time of writing). Clearly marked **unofficial** in the README.
 - `npm run check` = typecheck + tests + build + `publint` + `attw`; it runs automatically on `prepublishOnly`.
-- `.github/workflows/release.yml` publishes on a `v*` tag with `npm publish --provenance` using an `NPM_TOKEN` secret.
-- SemVer; `CHANGELOG.md` per release.
+- Releases are automated with semantic-release: merging `develop` into `master` versions from Conventional Commits, publishes to npm with provenance, tags and writes the GitHub release.
+- SemVer; release notes on GitHub Releases.
 
 ## 8. Open questions / to verify against a live org
 

@@ -2,16 +2,25 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [develop, master]
   pull_request:
+    branches: [develop, master]
+    types: [opened, edited, synchronize, reopened]
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    # A title edit only needs the title check.
+    if: github.event.action != 'edited'
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         node: [18, 20, 22, 24]
     steps:
@@ -25,3 +34,17 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run lint:package
+
+  # Feature PRs are squash merged, so the title becomes the commit that decides the next version.
+  pr-title:
+    if: github.event_name == 'pull_request' && github.base_ref == 'develop'
+    runs-on: ubuntu-latest
+    steps:
+      - name: PR title follows Conventional Commits
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if ! printf '%s' "$TITLE" | grep -Eq '^(feat|fix|perf|refactor|docs|test|build|ci|chore|style|revert)(\([a-z0-9 ._-]+\))?!?: .+'; then
+            echo "PR title must follow Conventional Commits, for example 'feat: add retainer invoice refunds' or 'fix(gst): reject retired state codes'."
+            exit 1
+          fi

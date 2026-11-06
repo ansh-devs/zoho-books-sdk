@@ -527,10 +527,11 @@ const books = new ZohoBooks({ accessToken: 'test', organizationId: '1', fetch: m
 ```bash
 npm install
 npm run check      # typecheck, tests, build, publint and attw
-npm publish        # runs check first through prepublishOnly
 ```
 
-Publishing from your machine works as is. The GitHub release workflow adds npm provenance, which npm only supports in CI.
+### Releases
+
+Merging into `master` releases automatically. Commit messages follow [Conventional Commits](https://www.conventionalcommits.org) and decide the version: `fix:` is a patch, `feat:` a minor, and `feat!:` or a `BREAKING CHANGE:` footer a major. Release notes are on [GitHub Releases](https://github.com/ansh-devs/zoho-books-sdk/releases).
 
 See [PLAN.md](./PLAN.md) for the research, design decisions and roadmap.
 
