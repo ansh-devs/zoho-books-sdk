@@ -1,5 +1,5 @@
 /** Run without arguments to print the consent URL, then with the returned code to print the refresh token and orgs. */
-import { ZohoBooks, ZohoOAuth, Scopes, type DataCenter } from 'zoho-books-sdk';
+import { ZohoBooks, ZohoOAuth, Scopes, type DataCenter } from '@ansh-devs/zoho-books-sdk';
 
 const dataCenter = (process.env.ZOHO_DATA_CENTER ?? 'in') as DataCenter;
 const redirectUri = process.env.ZOHO_REDIRECT_URI ?? 'http://localhost:3000/callback';

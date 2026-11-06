@@ -1,5 +1,5 @@
 /** Record payments from your own system against unpaid Zoho invoices, page by page. */
-import { ZohoBooks, toZohoDate } from 'zoho-books-sdk';
+import { ZohoBooks, toZohoDate } from '@ansh-devs/zoho-books-sdk';
 
 const books = ZohoBooks.fromEnv();
 const paidInMySystem = new Map<string, number>([['ORDER-1042', 43660]]);

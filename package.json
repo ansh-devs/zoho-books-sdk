@@ -1,5 +1,5 @@
 {
-  "name": "zoho-books-sdk",
+  "name": "@ansh-devs/zoho-books-sdk",
   "version": "0.0.0-development",
   "description": "Type safe, zero dependency Node.js SDK for the Zoho Books API v3: invoicing, India GST, e invoicing, payments, OAuth across all data centers, rate limiting and auto pagination.",
   "keywords": [
