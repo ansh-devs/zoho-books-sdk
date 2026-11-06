@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'tsup';
+
+const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
 
 export default defineConfig({
   entry: { index: 'src/index.ts', 'gst/index': 'src/gst/index.ts' },
@@ -10,4 +13,5 @@ export default defineConfig({
   splitting: false,
   target: 'node18',
   platform: 'node',
+  define: { __SDK_VERSION__: JSON.stringify(version) },
 });

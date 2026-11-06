@@ -1,16 +1,9 @@
-/**
- * Indian states / union territories with their GST numeric code (first two
- * digits of a GSTIN) and the 2-letter code used for `place_of_supply` /
- * `place_of_contact` in Zoho Books.
- *
- * Zoho does not publish this table in its API reference; the alpha codes are
- * the standard GST abbreviations (e.g. `TN`, `KA`, `TS`, `OD`). If your org
- * rejects a code, override it via {@link setStateCodeOverrides}.
- */
+/** Indian state with its GSTIN prefix and the two letter code Zoho uses for place of supply.
+ * Zoho does not publish the letter codes, so they can be remapped with setStateCodeOverrides. */
 export interface IndianState {
-  /** GST numeric code, e.g. `33`. */
+  /** GSTIN prefix, e.g. 33. */
   gstCode: string;
-  /** Zoho place-of-supply code, e.g. `TN`. */
+  /** Place of supply code, e.g. TN. */
   code: string;
   name: string;
   isUnionTerritory: boolean;
@@ -56,13 +49,13 @@ const RAW: Array<[string, string, string, boolean]> = [
   ['97', 'OT', 'Other Territory', true],
 ];
 
-/** Legacy GST codes that still appear on older GSTINs. */
+/** Old GSTIN prefixes still seen on existing registrations. */
 const LEGACY_GST_CODES: Record<string, string> = {
-  '25': 'DN', // Daman and Diu (merged into 26 in 2020)
-  '28': 'AP', // Andhra Pradesh (pre-bifurcation)
+  '25': 'DN', // Daman and Diu, merged into 26 in 2020
+  '28': 'AP', // Andhra Pradesh before the 2014 split
 };
 
-/** Common alternate spellings / codes seen in the wild. */
+/** Other spellings and codes in common use. */
 const ALIASES: Record<string, string> = {
   OR: 'OD',
   ORISSA: 'OD',
@@ -82,10 +75,7 @@ export const INDIAN_STATES: readonly IndianState[] = Object.freeze(
 
 let overrides: Record<string, string> = {};
 
-/**
- * Remap SDK state codes to what your Zoho org expects, e.g.
- * `setStateCodeOverrides({ OD: 'OR' })`.
- */
+/** Remap state codes to what your Zoho org accepts, e.g. { OD: 'OR' }. */
 export function setStateCodeOverrides(map: Record<string, string>): void {
   overrides = { ...map };
 }
@@ -98,10 +88,7 @@ const byCode = new Map(INDIAN_STATES.map((s) => [s.code, s]));
 const byGst = new Map(INDIAN_STATES.map((s) => [s.gstCode, s]));
 const byName = new Map(INDIAN_STATES.map((s) => [s.name.toUpperCase(), s]));
 
-/**
- * Resolve a state from a 2-letter code, GST numeric code, or full name
- * (case-insensitive). Returns `undefined` if unknown.
- */
+/** State from a letter code, GSTIN prefix or name, ignoring case. undefined when unknown. */
 export function findState(input: string | undefined | null): IndianState | undefined {
   if (!input) return undefined;
   const raw = input.trim().toUpperCase();
@@ -117,13 +104,13 @@ export function findState(input: string | undefined | null): IndianState | undef
   );
 }
 
-/** Normalise any state representation to the Zoho place-of-supply code. */
+/** Place of supply code for any state code, prefix or name. */
 export function toPlaceOfSupply(input: string | undefined | null): string | undefined {
   const s = findState(input);
   return s ? applyOverride(s.code) : undefined;
 }
 
-/** State code derived from the first two digits of a GSTIN. */
+/** State from the first two digits of a GSTIN. */
 export function stateFromGstin(gstin: string): IndianState | undefined {
   const prefix = gstin.trim().slice(0, 2);
   if (!/^\d{2}$/.test(prefix)) return undefined;

@@ -5,26 +5,22 @@ import type { FetchLike } from '../http/types.js';
 export interface OAuthClientOptions {
   clientId: string;
   clientSecret: string;
-  /** Data center of the user's account. Defaults to `us`. */
+  /** Data center of the Zoho account. Defaults to us. */
   dataCenter?: DataCenter;
-  /** Override the accounts server URL (takes precedence over `dataCenter`). */
+  /** Accounts server URL. Overrides dataCenter. */
   accountsUrl?: string;
-  /**
-   * Where to send token-endpoint parameters. `body` (default) sends a
-   * standard form-encoded body and keeps secrets out of URLs/logs; `query`
-   * mirrors the examples in Zoho's docs.
-   */
+  /** Send token parameters in the form body (default) or the query string, as Zoho docs show. */
   tokenParamsIn?: 'body' | 'query';
   fetch?: FetchLike;
 }
 
 export interface AuthorizationUrlOptions {
-  /** Scopes, e.g. `['ZohoBooks.fullaccess.all']`. */
+  /** Scopes such as ZohoBooks.invoices.ALL. */
   scopes: string[];
   redirectUri: string;
-  /** `offline` (default) returns a refresh token on the first consent. */
+  /** offline (default) returns a refresh token on first consent. */
   accessType?: 'offline' | 'online';
-  /** `consent` forces the consent screen (needed to get a new refresh token). */
+  /** consent forces the consent screen, needed for a new refresh token. */
   prompt?: 'consent';
   state?: string;
 }
@@ -39,11 +35,7 @@ export interface TokenResponse {
   id_token?: string;
 }
 
-/**
- * Low-level OAuth 2.0 helper for Zoho Accounts: build consent URLs, exchange
- * grant codes, refresh and revoke tokens. Most apps only need it once, to
- * obtain a refresh token; after that, pass the refresh token to `ZohoBooks`.
- */
+/** Zoho Accounts OAuth: consent URL, code exchange, refresh, revoke. */
 export class ZohoOAuth {
   readonly accountsUrl: string;
   private readonly clientId: string;
@@ -71,7 +63,7 @@ export class ZohoOAuth {
     return url.toString();
   }
 
-  /** Exchange an authorization (grant) code for tokens. */
+  /** Exchange a grant code for tokens. */
   exchangeCode(code: string, redirectUri?: string): Promise<TokenResponse> {
     const params: Record<string, string> = {
       grant_type: 'authorization_code',
@@ -92,11 +84,7 @@ export class ZohoOAuth {
     });
   }
 
-  /**
-   * Self Client `client_credentials` grant (no user consent, no refresh
-   * token). `soid` is `ZohoBooks.<organization_id>` for Books.
-   * Experimental: Zoho documents the grant, but not Books support explicitly.
-   */
+  /** Self Client client_credentials grant. Experimental for Books; soid is ZohoBooks.<organization_id>. */
   clientCredentials(scopes: string[], soid?: string): Promise<TokenResponse> {
     const params: Record<string, string> = {
       grant_type: 'client_credentials',
@@ -108,7 +96,7 @@ export class ZohoOAuth {
     return this.tokenRequest(params);
   }
 
-  /** Revoke a refresh token (also invalidates the access tokens it minted). */
+  /** Revoke a refresh token and every access token it minted. */
   async revoke(refreshToken: string): Promise<void> {
     const url = `${this.accountsUrl}/oauth/v2/token/revoke?token=${encodeURIComponent(refreshToken)}`;
     let res: Response;
@@ -146,15 +134,15 @@ export class ZohoOAuth {
     try {
       body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
     } catch {
-      // fallthrough: handled below
+      // Handled by the check below.
     }
 
-    // Zoho reports OAuth failures as HTTP 200 with an `error` field.
+    // Zoho reports OAuth failures as HTTP 200 with an error field.
     if (!res.ok || typeof body.error === 'string' || typeof body.access_token !== 'string') {
       const oauthError = typeof body.error === 'string' ? body.error : undefined;
       throw new ZohoOAuthError(
         `Zoho OAuth token request failed: ${oauthError ?? `HTTP ${res.status}`}${
-          oauthError === 'invalid_code' ? ' (refresh token or grant code is invalid, expired or revoked — also check the data center)' : ''
+          oauthError === 'invalid_code' ? ' (refresh token or grant code is invalid, expired or revoked, or the data center is wrong)' : ''
         }`,
         { status: res.status, body, method: 'POST', path: '/oauth/v2/token', oauthError },
       );

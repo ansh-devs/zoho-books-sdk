@@ -15,7 +15,7 @@ import type {
   ZohoDate,
 } from './common.js';
 
-// ───────────────────────────── Organizations ─────────────────────────────
+// Inputs are strict so typos fail to compile. Responses accept fields Zoho adds later.
 
 export interface Organization {
   organization_id: string;
@@ -33,13 +33,11 @@ export interface Organization {
   time_zone?: string;
   date_format?: string;
   fiscal_year_start_month?: number;
-  /** e.g. `in`, `us`, `uk`, `uae` — drives which fields are valid. */
+  /** Edition such as in, us, uk or uae. Decides which fields are valid. */
   version?: string;
   is_org_active?: boolean;
   [key: string]: unknown;
 }
-
-// ───────────────────────────── Contacts ─────────────────────────────
 
 export interface ContactPersonInput {
   contact_person_id?: string;
@@ -54,11 +52,11 @@ export interface ContactPersonInput {
   is_primary_contact?: boolean;
   enable_portal?: boolean;
   communication_preference?: ContactPersonRef['communication_preference'];
-  [key: string]: unknown;
 }
 
 export interface ContactPerson extends ContactPersonInput {
   contact_person_id: string;
+  [key: string]: unknown;
 }
 
 export interface ContactInput {
@@ -87,22 +85,19 @@ export interface ContactInput {
   tds_tax_id?: string;
   tax_exemption_id?: string;
   tax_exemption_code?: string;
-  // India GST
   gst_treatment?: GstTreatment;
-  /** 15-character GSTIN. */
+  /** 15 character GSTIN. */
   gst_no?: string;
-  /** India: 2-letter state/UT code where the contact is located. */
+  /** India: two letter code of the state where the contact is. */
   place_of_contact?: string;
   legal_name?: string;
   trader_name?: string;
-  // GCC / UK / other
   tax_treatment?: TaxTreatment;
   tax_reg_no?: string;
   vat_reg_no?: string;
   vat_treatment?: string;
   country_code?: string;
   place_of_supply?: string;
-  [key: string]: unknown;
 }
 
 export interface Contact extends ContactInput {
@@ -115,6 +110,7 @@ export interface Contact extends ContactInput {
   primary_contact_id?: string;
   created_time?: string;
   last_modified_time?: string;
+  [key: string]: unknown;
 }
 
 export interface ContactListParams extends CommonListParams {
@@ -126,11 +122,9 @@ export interface ContactListParams extends CommonListParams {
   status?: string;
 }
 
-// ───────────────────────────── Items ─────────────────────────────
-
 export interface ItemTaxPreference {
   tax_id: string;
-  /** India: `intra` (CGST+SGST) or `inter` (IGST). */
+  /** India: intra is CGST plus SGST, inter is IGST. */
   tax_specification: LooseString<'intra' | 'inter'>;
   tax_name?: string;
   tax_percentage?: number;
@@ -144,7 +138,7 @@ export interface ItemInput {
   unit?: string;
   product_type?: ProductType | LooseString<'service'>;
   item_type?: LooseString<'sales' | 'purchases' | 'sales_and_purchases' | 'inventory'>;
-  /** India: HSN (goods) / SAC (services) code. */
+  /** India HSN or SAC code. */
   hsn_or_sac?: string;
   tax_id?: string;
   is_taxable?: boolean;
@@ -158,7 +152,6 @@ export interface ItemInput {
   vendor_id?: string;
   reorder_level?: number;
   custom_fields?: CustomFieldValue[];
-  [key: string]: unknown;
 }
 
 export interface Item extends ItemInput {
@@ -167,6 +160,7 @@ export interface Item extends ItemInput {
   status?: LooseString<'active' | 'inactive'>;
   tax_name?: string;
   tax_percentage?: number;
+  [key: string]: unknown;
 }
 
 export interface ItemListParams extends CommonListParams {
@@ -176,18 +170,15 @@ export interface ItemListParams extends CommonListParams {
   tax_id?: string;
 }
 
-// ───────────────────────────── Taxes & currency ─────────────────────────────
-
 export interface TaxInput {
   tax_name?: string;
   tax_percentage?: number;
   tax_type?: LooseString<'tax' | 'compound_tax'>;
-  /** India: `igst`, `cgst`, `sgst`, `nil`, `cess`. */
+  /** India: igst, cgst, sgst, nil or cess. */
   tax_specific_type?: LooseString<'igst' | 'cgst' | 'sgst' | 'nil' | 'cess'>;
   tax_authority_id?: string;
   country_code?: string;
   is_value_added?: boolean;
-  [key: string]: unknown;
 }
 
 export interface Tax extends TaxInput {
@@ -196,11 +187,12 @@ export interface Tax extends TaxInput {
   tax_percentage: number;
   is_default_tax?: boolean;
   is_editable?: boolean;
+  [key: string]: unknown;
 }
 
 export interface TaxGroupInput {
   tax_group_name: string;
-  /** Comma-separated tax ids, e.g. CGST id + SGST id. */
+  /** Comma separated tax ids, e.g. the CGST and SGST ids. */
   taxes: string;
 }
 
@@ -224,8 +216,6 @@ export interface Currency {
   [key: string]: unknown;
 }
 
-// ───────────────────────────── Sales documents ─────────────────────────────
-
 export type InvoiceStatus = LooseString<
   'draft' | 'sent' | 'overdue' | 'paid' | 'void' | 'unpaid' | 'partially_paid' | 'viewed' | 'pending_approval' | 'approved'
 >;
@@ -245,7 +235,7 @@ export interface InvoiceInput extends SalesDocumentInput {
   payment_options?: {
     payment_gateways?: Array<{ gateway_name: string; configured?: boolean; additional_field1?: string }>;
   };
-  /** India: invoice dated before GST rollout (July 2017). */
+  /** India: invoice dated before GST began in July 2017. */
   is_pre_gst?: boolean;
 }
 
@@ -259,7 +249,7 @@ export interface Invoice extends SalesDocument, InvoiceInput {
   credits_applied?: number;
   write_off_amount?: number;
   invoice_url?: string;
-  /** India e-invoice details once pushed to the IRP. */
+  /** India e invoice details after the IRP push. */
   einvoice_details?: EInvoiceDetails;
 }
 
@@ -370,8 +360,6 @@ export interface DeliveryChallan extends SalesDocument, DeliveryChallanInput {
   deliverychallan_id: string;
 }
 
-// ───────────────────────────── Payments ─────────────────────────────
-
 export interface PaymentApplication {
   invoice_id: string;
   amount_applied: number;
@@ -394,7 +382,6 @@ export interface CustomerPaymentInput {
   contact_persons?: string[];
   custom_fields?: CustomFieldValue[];
   tags?: ReportingTag[];
-  [key: string]: unknown;
 }
 
 export interface CustomerPayment extends CustomerPaymentInput {
@@ -402,6 +389,7 @@ export interface CustomerPayment extends CustomerPaymentInput {
   payment_number?: string;
   customer_name?: string;
   unused_amount?: number;
+  [key: string]: unknown;
 }
 
 export interface Refund {
@@ -412,10 +400,7 @@ export interface Refund {
   amount: number;
   from_account_id?: string;
   description?: string;
-  [key: string]: unknown;
 }
-
-// ───────────────────────────── Purchases ─────────────────────────────
 
 export interface PurchaseDocumentInput {
   vendor_id?: string;
@@ -431,15 +416,12 @@ export interface PurchaseDocumentInput {
   is_inclusive_tax?: boolean;
   custom_fields?: CustomFieldValue[];
   tags?: ReportingTag[];
-  // India GST
   gst_treatment?: GstTreatment;
   gst_no?: string;
   source_of_supply?: string;
   destination_of_supply?: string;
   is_reverse_charge_applied?: boolean;
-  // GCC
   tax_treatment?: TaxTreatment;
-  [key: string]: unknown;
 }
 
 export interface BillInput extends PurchaseDocumentInput {
@@ -455,6 +437,7 @@ export interface Bill extends BillInput {
   status?: string;
   total?: number;
   balance?: number;
+  [key: string]: unknown;
 }
 
 export interface PurchaseOrderInput extends PurchaseDocumentInput {
@@ -467,6 +450,7 @@ export interface PurchaseOrder extends PurchaseOrderInput {
   purchaseorder_number: string;
   status?: string;
   total?: number;
+  [key: string]: unknown;
 }
 
 export interface VendorCreditInput extends PurchaseDocumentInput {
@@ -477,6 +461,7 @@ export interface VendorCredit extends VendorCreditInput {
   vendor_credit_id: string;
   status?: string;
   balance?: number;
+  [key: string]: unknown;
 }
 
 export interface VendorPaymentInput {
@@ -489,12 +474,12 @@ export interface VendorPaymentInput {
   reference_number?: string;
   description?: string;
   exchange_rate?: number;
-  [key: string]: unknown;
 }
 
 export interface VendorPayment extends VendorPaymentInput {
   payment_id: string;
   vendor_name?: string;
+  [key: string]: unknown;
 }
 
 export interface ExpenseInput {
@@ -512,8 +497,7 @@ export interface ExpenseInput {
   exchange_rate?: number;
   reference_number?: string;
   description?: string;
-  line_items?: Array<{ account_id: string; amount: number; tax_id?: string; description?: string; [key: string]: unknown }>;
-  // India GST
+  line_items?: Array<{ account_id: string; amount: number; tax_id?: string; description?: string }>;
   gst_no?: string;
   source_of_supply?: string;
   destination_of_supply?: string;
@@ -521,13 +505,13 @@ export interface ExpenseInput {
   reverse_charge_tax_id?: string;
   custom_fields?: CustomFieldValue[];
   tags?: ReportingTag[];
-  [key: string]: unknown;
 }
 
 export interface Expense extends ExpenseInput {
   expense_id: string;
   status?: string;
   total?: number;
+  [key: string]: unknown;
 }
 
 export interface RecurringExpense extends ExpenseInput {
@@ -537,6 +521,7 @@ export interface RecurringExpense extends ExpenseInput {
   end_date?: ZohoDate;
   recurrence_frequency?: string;
   repeat_every?: number;
+  [key: string]: unknown;
 }
 
 export interface RecurringBill extends BillInput {
@@ -546,9 +531,8 @@ export interface RecurringBill extends BillInput {
   end_date?: ZohoDate;
   recurrence_frequency?: string;
   repeat_every?: number;
+  [key: string]: unknown;
 }
-
-// ───────────────────────────── Accounting & banking ─────────────────────────────
 
 export interface ChartOfAccount {
   account_id: string;
@@ -570,7 +554,6 @@ export interface JournalLine {
   customer_id?: string;
   tax_id?: string;
   tags?: ReportingTag[];
-  [key: string]: unknown;
 }
 
 export interface JournalInput {
@@ -582,7 +565,6 @@ export interface JournalInput {
   exchange_rate?: number;
   line_items?: JournalLine[];
   custom_fields?: CustomFieldValue[];
-  [key: string]: unknown;
 }
 
 export interface Journal extends JournalInput {
@@ -590,6 +572,7 @@ export interface Journal extends JournalInput {
   entry_number?: string;
   status?: string;
   total?: number;
+  [key: string]: unknown;
 }
 
 export interface BankAccount {
@@ -617,8 +600,6 @@ export interface BankTransaction {
   to_account_id?: string;
   [key: string]: unknown;
 }
-
-// ───────────────────────────── Projects, users, misc ─────────────────────────────
 
 export interface Project {
   project_id: string;
@@ -668,16 +649,14 @@ export interface Location {
   type?: string;
   is_primary?: boolean;
   address?: Address;
-  /** India: a location can carry its own GSTIN. */
+  /** India: a location can have its own GSTIN. */
   tax_settings_id?: string;
   [key: string]: unknown;
 }
 
-// ───────────────────────────── E-invoicing ─────────────────────────────
-
-/** India IRP / UAE e-invoice status attached to invoices and credit notes. */
+/** E invoice status on an invoice or credit note. */
 export interface EInvoiceDetails {
-  /** Invoice Reference Number (64-char hash) issued by the IRP. */
+  /** IRN issued by the IRP. */
   inv_ref_num?: string;
   irn?: string;
   ack_number?: string;
@@ -690,20 +669,17 @@ export interface EInvoiceDetails {
 }
 
 export interface MarkEInvoicePushedInput {
-  /** IRN. */
+  /** The IRN. */
   uuid: string;
   ack_no: string;
   ack_date: string;
   signed_qr_code?: string;
   internal_data?: string;
-  [key: string]: unknown;
 }
 
+/** Zoho does not document these fields, so they pass through as given. */
 export interface EInvoiceCancelInput {
-  /**
-   * IRP cancellation reason. NIC codes: 1 = Duplicate, 2 = Data entry mistake,
-   * 3 = Order cancelled, 4 = Others. Passed through as-is.
-   */
+  /** NIC reason code: 1 duplicate, 2 data entry mistake, 3 order cancelled, 4 others. */
   reason?: string;
   cancel_reason?: string;
   remarks?: string;

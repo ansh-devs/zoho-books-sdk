@@ -1,17 +1,7 @@
-/**
- * Shared building blocks for Zoho Books models.
- *
- * Every model is "extensible": known fields are strongly typed, and unknown
- * fields are still accepted and returned, because Zoho adds fields frequently
- * and varies them by edition (India, UAE, UK, US, ...).
- */
-
-/** A string union that still accepts unknown values without losing autocomplete. */
+/** A string union that still accepts values Zoho adds later. */
 export type LooseString<T extends string> = T | (string & {});
 
-export type Extensible<T> = T & { [key: string]: unknown };
-
-/** Date in `yyyy-mm-dd`. */
+/** ISO 8601 calendar date, the format of every Zoho date field. */
 export type ZohoDate = string;
 
 export interface Address {
@@ -29,7 +19,7 @@ export interface Address {
 
 export interface CustomFieldValue {
   customfield_id?: string;
-  /** Some modules (contacts) use `index` (1-10) instead of `customfield_id`. */
+  /** Contacts use index 1 to 10 instead of customfield_id. */
   index?: number;
   label?: string;
   api_name?: string;
@@ -50,7 +40,7 @@ export interface ContactPersonRef {
   };
 }
 
-/** India GST treatment of a contact / transaction. */
+/** India GST treatment. Zoho documents business_gst, business_none, overseas and consumer. */
 export type GstTreatment = LooseString<
   | 'business_gst'
   | 'business_none'
@@ -63,7 +53,7 @@ export type GstTreatment = LooseString<
   | 'business_registered_composition'
 >;
 
-/** GCC / UAE tax treatment. */
+/** GCC and UAE tax treatment. */
 export type TaxTreatment = LooseString<
   | 'vat_registered'
   | 'vat_not_registered'
@@ -86,7 +76,7 @@ export interface LineItemInput {
   bcy_rate?: number;
   quantity?: number;
   unit?: string;
-  /** Percentage string (`"10%"`) or flat amount. */
+  /** Percentage string such as "10%" or a flat amount. */
   discount?: number | string;
   discount_amount?: number;
   tax_id?: string;
@@ -94,7 +84,7 @@ export interface LineItemInput {
   tax_exemption_id?: string;
   tax_exemption_code?: string;
   reverse_charge_tax_id?: string;
-  /** India: HSN code for goods / SAC code for services. Always a string (leading zeros matter). */
+  /** India HSN code for goods or SAC code for services. A string so leading zeros survive. */
   hsn_or_sac?: string;
   product_type?: ProductType;
   location_id?: string;
@@ -106,7 +96,6 @@ export interface LineItemInput {
   tags?: ReportingTag[];
   item_custom_fields?: CustomFieldValue[];
   line_item_category?: LooseString<'line_item' | 'header' | 'subtotal'>;
-  [key: string]: unknown;
 }
 
 export interface LineItem extends LineItemInput {
@@ -116,6 +105,7 @@ export interface LineItem extends LineItemInput {
   tax_type?: string;
   tax_percentage?: number;
   line_item_taxes?: Array<{ tax_id: string; tax_name: string; tax_amount: number }>;
+  [key: string]: unknown;
 }
 
 export interface TaxSummary {
@@ -126,7 +116,7 @@ export interface TaxSummary {
   [key: string]: unknown;
 }
 
-/** Common header fields of sales documents (invoice, estimate, SO, CN...). */
+/** Header fields shared by invoices, estimates, sales orders and credit notes. */
 export interface SalesDocumentInput {
   customer_id?: string;
   currency_id?: string;
@@ -153,23 +143,20 @@ export interface SalesDocumentInput {
   tags?: ReportingTag[];
   billing_address_id?: string;
   shipping_address_id?: string;
-  // India GST
   gst_treatment?: GstTreatment;
   gst_no?: string;
-  /** India: 2-letter state code (e.g. `KA`, `MH`). GCC: emirate / country code. */
+  /** India: two letter state code such as KA. GCC: emirate or country code. */
   place_of_supply?: string;
   is_reverse_charge_applied?: boolean;
   shipping_gst_no?: string;
   shipping_trader_name?: string;
   shipping_legal_name?: string;
-  // GCC / UK / other editions
   tax_treatment?: TaxTreatment;
   vat_treatment?: string;
   tax_reg_no?: string;
   tax_id?: string;
   tax_authority_id?: string;
   tax_exemption_id?: string;
-  [key: string]: unknown;
 }
 
 export interface SalesDocument extends SalesDocumentInput {
@@ -185,6 +172,7 @@ export interface SalesDocument extends SalesDocumentInput {
   created_time?: string;
   last_modified_time?: string;
   line_items?: LineItem[];
+  [key: string]: unknown;
 }
 
 export interface Comment {
@@ -192,14 +180,6 @@ export interface Comment {
   description: string;
   commented_by?: string;
   date?: string;
-  [key: string]: unknown;
-}
-
-export interface Document {
-  document_id: string;
-  file_name: string;
-  file_type?: string;
-  file_size?: number;
   [key: string]: unknown;
 }
 
@@ -211,10 +191,9 @@ export interface EmailInput {
   bcc_mail_ids?: string[];
   subject?: string;
   body?: string;
-  [key: string]: unknown;
 }
 
-/** Common list filters supported by most transaction list endpoints. */
+/** Filters most list endpoints accept. Custom field filters use the cf_ prefix. */
 export interface CommonListParams {
   page?: number;
   per_page?: number;
@@ -226,5 +205,5 @@ export interface CommonListParams {
   date_start?: ZohoDate;
   date_end?: ZohoDate;
   last_modified_time?: string;
-  [key: string]: string | number | boolean | null | undefined | Array<string | number>;
+  [customField: `cf_${string}`]: string | number | boolean | undefined;
 }

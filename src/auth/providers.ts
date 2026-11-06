@@ -2,24 +2,17 @@ import { createHash } from 'node:crypto';
 import { ZohoOAuth, type OAuthClientOptions, type TokenResponse } from './oauth.js';
 import { MemoryTokenStore, type StoredToken, type TokenStore } from './token-store.js';
 
-/**
- * Supplies access tokens to the HTTP layer. Implement this to plug in any
- * custom strategy (secrets manager, sidecar, per-tenant tokens...).
- */
+/** Supplies access tokens to the HTTP layer. */
 export interface AuthProvider {
-  /** Return a valid access token, refreshing if necessary. */
+  /** A valid access token, refreshed if needed. */
   getAccessToken(): Promise<string>;
-  /**
-   * Called when Zoho rejected `token` with 401. Providers that can refresh
-   * should drop it so the next `getAccessToken()` mints a new one. Return
-   * `true` if a retry with a fresh token makes sense.
-   */
+  /** Drop a token Zoho rejected with 401. Return true if a retry with a fresh token makes sense. */
   invalidate?(token: string): Promise<boolean> | boolean;
-  /** `api_domain` reported with the current token, if known. */
+  /** api_domain reported with the current token. */
   getApiDomain?(): string | undefined;
 }
 
-/** A fixed access token (e.g. from your own token service). Never refreshes. */
+/** A fixed access token. Never refreshes. */
 export class StaticTokenAuth implements AuthProvider {
   constructor(private readonly accessToken: string) {}
 
@@ -33,22 +26,17 @@ export class StaticTokenAuth implements AuthProvider {
 }
 
 interface CachingOptions {
-  /** Where to cache access tokens. Defaults to in-memory (per process). */
+  /** Token cache. Defaults to memory in this process. */
   tokenStore?: TokenStore;
-  /** Key in the store. Defaults to a hash of client id + grant. */
+  /** Cache key. Defaults to a hash of the client id and grant. */
   tokenStoreKey?: string;
   /** Refresh this many ms before expiry. Default 5 minutes. */
   refreshSkewMs?: number;
-  /** Called whenever a new access token is minted (persist it, emit metrics...). */
+  /** Called after each new access token. */
   onTokenRefreshed?: (token: StoredToken) => void;
 }
 
-/**
- * Shared machinery: cache in a {@link TokenStore}, refresh ahead of expiry,
- * and single-flight concurrent refreshes so a burst of requests never mints
- * more than one token (Zoho allows only 10 tokens / 10 min per refresh token
- * and 15 active ones).
- */
+/** Caches tokens and shares one refresh between concurrent callers, since Zoho allows 10 tokens per 10 minutes. */
 abstract class CachingTokenAuth implements AuthProvider {
   private readonly store: TokenStore;
   private readonly key: string;
@@ -56,7 +44,7 @@ abstract class CachingTokenAuth implements AuthProvider {
   private readonly onTokenRefreshed: ((token: StoredToken) => void) | undefined;
   private inflight: Promise<StoredToken> | undefined;
   private apiDomain: string | undefined;
-  /** @internal test hook */
+  /** @internal test clock */
   now: () => number = Date.now;
 
   protected constructor(options: CachingOptions, defaultKeyMaterial: string) {
@@ -89,7 +77,7 @@ abstract class CachingTokenAuth implements AuthProvider {
     return true;
   }
 
-  /** Force a refresh now. Concurrent calls share the same request. */
+  /** Refresh now. Concurrent calls share one request. */
   refresh(): Promise<StoredToken> {
     if (!this.inflight) {
       this.inflight = this.doRefresh().finally(() => {
@@ -126,10 +114,7 @@ export interface RefreshTokenAuthOptions extends OAuthClientOptions, CachingOpti
   refreshToken: string;
 }
 
-/**
- * The standard server-side flow: long-lived refresh token in, short-lived
- * access tokens out.
- */
+/** Long lived refresh token in, short lived access tokens out. */
 export class RefreshTokenAuth extends CachingTokenAuth {
   readonly oauth: ZohoOAuth;
   private readonly refreshToken: string;
@@ -147,14 +132,11 @@ export class RefreshTokenAuth extends CachingTokenAuth {
 
 export interface ClientCredentialsAuthOptions extends OAuthClientOptions, CachingOptions {
   scopes: string[];
-  /** `ZohoBooks.<organization_id>`. */
+  /** ZohoBooks.<organization_id> */
   soid?: string;
 }
 
-/**
- * Self Client `client_credentials` grant — server-to-server, no refresh token.
- * Experimental for Books (documented by Zoho Accounts, not by Books itself).
- */
+/** Self Client client_credentials grant. Experimental for Books. */
 export class ClientCredentialsAuth extends CachingTokenAuth {
   readonly oauth: ZohoOAuth;
   private readonly scopes: string[];

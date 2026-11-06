@@ -15,10 +15,7 @@ export function json(body: unknown, status = 200, headers: Record<string, string
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json;charset=UTF-8', ...headers } });
 }
 
-/**
- * Scriptable fetch: queue replies in order, or route by `METHOD path`.
- * Every call is recorded for assertions.
- */
+/** Fake fetch that answers from a queue or from routes by method and path, recording every call. */
 export function mockFetch(replies: Reply[] = []) {
   const calls: RecordedCall[] = [];
   const queue = [...replies];

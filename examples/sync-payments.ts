@@ -1,7 +1,4 @@
-/**
- * Reconcile: walk every unpaid invoice lazily and record payments from your own system.
- * Uses the async iterator (auto-pagination) and the built-in rate limiter.
- */
+/** Record payments from your own system against unpaid Zoho invoices, page by page. */
 import { ZohoBooks } from 'zoho-books-sdk';
 
 const books = ZohoBooks.fromEnv();

@@ -6,13 +6,13 @@ export const WEBHOOK_SIGNATURE_HEADER = 'x-zoho-webhook-signature';
 type Params = URLSearchParams | Record<string, string | string[] | undefined> | undefined;
 
 export interface WebhookSignatureInput {
-  /** The secret configured on the webhook in Zoho Books. */
+  /** Secret set on the webhook in Zoho Books. */
   secret: string;
-  /** Query parameters of the incoming request (URL-decoded). */
+  /** Decoded query parameters of the request. */
   query?: Params;
-  /** Form fields for `x-www-form-urlencoded` payloads (URL-decoded). */
+  /** Decoded form fields, for form encoded payloads. */
   form?: Params;
-  /** The raw JSON body exactly as received (for JSON payloads). */
+  /** Raw JSON body exactly as received. */
   rawBody?: string | Uint8Array;
 }
 
@@ -27,12 +27,7 @@ function toPairs(p: Params): Array<[string, string]> {
   return out;
 }
 
-/**
- * Compute the expected signature:
- * `base64(HMAC-SHA256(secret, sortedKeyValuePairs + rawJsonBody))`, where the
- * query and form parameters are sorted by key and concatenated as
- * `key + value` without separators.
- */
+/** Base64 HMAC SHA256 of the query and form pairs sorted by key and joined without separators, then the raw body. */
 export function computeWebhookSignature(input: WebhookSignatureInput): string {
   const pairs = [...toPairs(input.query), ...toPairs(input.form)].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   const hmac = createHmac('sha256', input.secret);
@@ -43,22 +38,7 @@ export function computeWebhookSignature(input: WebhookSignatureInput): string {
   return hmac.digest('base64');
 }
 
-/**
- * Verify a Zoho Books webhook signature in constant time.
- *
- * ```ts
- * app.post('/zoho/webhook', express.raw({ type: '*\/*' }), (req, res) => {
- *   const ok = verifyWebhookSignature({
- *     secret: process.env.ZOHO_WEBHOOK_SECRET!,
- *     signature: req.header('x-zoho-webhook-signature'),
- *     query: req.query as Record<string, string>,
- *     rawBody: req.body,
- *   });
- *   if (!ok) return res.sendStatus(401);
- *   res.sendStatus(200); // ack fast — Zoho times out after 10 s and retries
- * });
- * ```
- */
+/** Verify the signature Zoho sends in the X Zoho Webhook Signature header, in constant time. */
 export function verifyWebhookSignature(input: WebhookSignatureInput & { signature: string | null | undefined }): boolean {
   if (!input.signature) return false;
   const expected = Buffer.from(computeWebhookSignature(input), 'utf8');

@@ -2,10 +2,7 @@ import { stateFromGstin, type IndianState } from './states.js';
 
 const CHARSET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-/**
- * Compute the GSTIN check character for the first 14 characters
- * (mod-36 Luhn variant used by GSTN).
- */
+/** GSTIN check character for the first 14 characters, using the GSTN base 36 Luhn method. */
 export function gstinChecksum(first14: string): string {
   const s = first14.toUpperCase();
   let sum = 0;
@@ -20,13 +17,13 @@ export function gstinChecksum(first14: string): string {
 
 export interface GstinInfo {
   valid: boolean;
-  /** Normalised (trimmed, upper-case) GSTIN. */
+  /** Trimmed, upper case GSTIN. */
   gstin: string;
   reason?: string;
   state?: IndianState;
-  /** Embedded PAN for regular taxpayers. */
+  /** PAN inside a regular taxpayer's GSTIN. */
   pan?: string;
-  /** `regular` (PAN-based), `tds` (TAN-based deductor), or `other` (UN body, NRTP, OIDAR...). */
+  /** regular has a PAN, tds has a TAN, other covers UN bodies, NRTP and OIDAR. */
   kind?: 'regular' | 'tds' | 'other';
 }
 
@@ -34,14 +31,14 @@ const GSTIN_SHAPE = /^[0-9]{2}[0-9A-Z]{10}[0-9A-Z]{3}$/;
 const PAN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 const TAN = /^[A-Z]{4}[0-9]{5}[A-Z]$/;
 
-/** Parse and validate a GSTIN: format, state code and checksum. */
+/** Check a GSTIN's format, state code and checksum. */
 export function parseGstin(input: string): GstinInfo {
   const gstin = (input ?? '').trim().toUpperCase();
   if (gstin.length !== 15) return { valid: false, gstin, reason: 'GSTIN must be 15 characters' };
   if (!GSTIN_SHAPE.test(gstin)) return { valid: false, gstin, reason: 'GSTIN has invalid characters' };
 
   const state = stateFromGstin(gstin);
-  // 99 = Centre jurisdiction / OIDAR, still a valid GSTN prefix.
+  // Prefix 99 is Centre jurisdiction and OIDAR, still valid.
   if (!state && gstin.slice(0, 2) !== '99') return { valid: false, gstin, reason: `Unknown state code ${gstin.slice(0, 2)}` };
 
   const expected = gstinChecksum(gstin.slice(0, 14));
@@ -63,11 +60,8 @@ export interface HsnSacInfo {
   reason?: string;
 }
 
-/**
- * Validate an HSN (goods: 4/6/8 digits) or SAC (services: 6 digits starting
- * with `99`). Pass `minDigits` to enforce the turnover-based minimum
- * (4 digits up to ₹5 Cr AATO, 6 digits above; 8 for exports/e-invoices is common).
- */
+/** Check an HSN code of 4, 6 or 8 digits, or a 6 digit SAC starting with 99.
+ * minDigits enforces the turnover rule: 4 up to ₹5 Cr AATO, 6 above. */
 export function validateHsnOrSac(input: string | number, options: { minDigits?: 4 | 6 | 8 } = {}): HsnSacInfo {
   const code = String(input ?? '').trim();
   if (!/^\d+$/.test(code)) return { valid: false, code, reason: 'HSN/SAC must contain digits only' };

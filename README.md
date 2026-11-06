@@ -108,9 +108,9 @@ Configure it once on the client:
 new ZohoBooks({
   // ...
   gst: {
-    homeState: 'KA',                         // optional; auto-detected from the organization
+    homeState: 'KA',                         // optional, read from the organization
     validateHsn: { minDigits: 6 },           // enforce HSN/SAC length (AATO > ₹5 Cr)
-    requireHsn: true,                        // mandatory for e-invoices
+    requireHsn: true,                        // required for e invoicing
     taxMap: { 18: { intra: '4600000001', inter: '4600000002' } }, // optional explicit mapping
   },
 });
@@ -196,7 +196,7 @@ try {
 | `ZohoNetworkError` / `ZohoTimeoutError` | No response received |
 | `ZohoOAuthError` | Token endpoint failure (`oauthError: 'invalid_code'`, ...) |
 | `ZohoGstError` | Local GST validation failed; no request was sent |
-| `ZohoConfigError` | Bad client configuration |
+| `ZohoConfigError` | Invalid usage caught before any request, such as an empty id or an endpoint the module lacks |
 
 All of them extend `ZohoBooksError` and carry `status`, `code`, `method`, `path`, `body` and `headers`.
 
@@ -209,6 +209,12 @@ All of them extend `ZohoBooksError` and carry `status`, `code`, `method`, `path`
 
 ```ts
 new ZohoBooks({ ..., rateLimit: { requestsPerMinute: 90, maxConcurrent: 5 }, retry: { maxRetries: 5 }, timeoutMs: 60_000 });
+```
+
+- Pass an `AbortSignal` to cancel. It also cuts short a wait in back off or in the limiter queue:
+
+```ts
+await books.invoices.get(id, { signal: AbortSignal.timeout(5_000) });
 ```
 
 - For safe sync from an external system, use **upsert by unique custom field**:
@@ -236,10 +242,14 @@ new ZohoBooks({ ..., tokenStore: redisStore });
 
 ## Multiple organizations
 
+Zoho's rate limits apply per organization, so use one client per org. `withOrganization` creates it once and returns the same client afterwards. It shares auth and the token cache, and has its own rate limiter.
+
 ```ts
-const acme = books.withOrganization('600000001');  // shares auth + token cache, own rate limiter
-await books.contacts.list({}, { organizationId: '600000002' }); // per-call override
+const acme = books.withOrganization('600000001');
+await acme.invoices.list();
 ```
+
+A one off call can also pass `{ organizationId }` in its options. That call uses the parent client's rate limiter.
 
 ## Webhooks
 
@@ -270,9 +280,24 @@ app.post('/zoho/webhook', express.raw({ type: '*/*' }), (req, res) => {
 | Settings | `organizations`, `taxes` (+ `.groups`), `currencies`, `users`, `locations`, `projects`, `timeEntries` |
 | India | `gst` |
 
-Each resource has `list`, `iterate`, `listAll`, `get`, `create`, `update` and `delete` where Zoho supports them. Documents also have `pdf`, `bulkPdf`, `email`, `getEmailContent`, `submit`, `approve`, `listComments` / `addComment` / `deleteComment`, `addAttachment` / `getAttachment` / `deleteAttachment`, `updateBillingAddress` / `updateShippingAddress`, `upsertByCustomField` and `deleteMany`, along with module-specific status actions (`markSent`, `markVoid`, `writeOff`, `refund`, `applyCredits`, ...).
+Each resource has `list`, `iterate`, `listAll`, `get`, `create`, `update` and `delete`. Documents also have `pdf`, plus whichever of these Zoho provides for that module: `bulkPdf`, `email`, `getEmailContent`, `submit`, `approve`, comments, attachments, billing and shipping address updates, `upsertByCustomField` and `deleteMany`. Each module's type only shows the methods Zoho really has (checked against Zoho's OpenAPI spec), so autocomplete never offers a call that would 404. Modules also have their own status actions such as `markSent`, `markVoid`, `writeOff`, `refund` and `applyCredits`.
 
-Every method takes a final `CallOptions` argument: `{ organizationId, signal, timeoutMs, headers }`.
+Every method takes `CallOptions` as its last argument: `{ organizationId, signal, timeoutMs, headers, query }`. Create calls on invoices, estimates, sales orders and credit notes also accept `send` and `ignoreAutoNumberGeneration` there.
+
+```ts
+await books.invoices.get(id, { organizationId: '600000002' });
+await books.invoices.create(data, { send: true, timeoutMs: 60_000 });
+```
+
+### Strict input types
+
+Input and filter types are strict, so a typo such as `{ stauts: 'paid' }` fails to compile instead of silently returning every record. Filters on custom fields use the `cf_` prefix and are always allowed:
+
+```ts
+await books.invoices.list({ status: 'unpaid', cf_order_id: 'ORD-1042' });
+```
+
+For a query parameter the SDK does not type yet, pass it in `opts.query`. For a body field it does not type yet, build the object in a variable first, or use `books.request()`.
 
 ### Anything else: the escape hatch
 
@@ -310,8 +335,11 @@ const books = new ZohoBooks({ accessToken: 'test', organizationId: '1', fetch: m
 
 ```bash
 npm install
-npm run check      # typecheck + tests + build + publint + attw
+npm run check      # typecheck, tests, build, publint and attw
+npm publish        # runs check first through prepublishOnly
 ```
+
+Publishing from your machine works as is. The GitHub release workflow adds npm provenance, which npm only supports in CI.
 
 See [PLAN.md](./PLAN.md) for the research, design decisions and roadmap.
 

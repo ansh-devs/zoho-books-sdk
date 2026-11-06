@@ -1,7 +1,4 @@
-/**
- * Pure India-GST utilities (no network). Also available as the
- * `zoho-books-sdk/gst` sub-path for front-end or validation-only use.
- */
+/** India GST utilities with no network calls, also published as the gst subpath. */
 export { INDIAN_STATES, findState, stateFromGstin, toPlaceOfSupply, setStateCodeOverrides, type IndianState } from './states.js';
 export { parseGstin, isValidGstin, gstinChecksum, validateHsnOrSac, type GstinInfo, type HsnSacInfo } from './validation.js';
 export {

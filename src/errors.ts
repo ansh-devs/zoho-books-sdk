@@ -1,29 +1,20 @@
-/**
- * Error hierarchy for the SDK.
- *
- * Zoho Books returns a JSON envelope `{ code, message }` on every response.
- * `code === 0` means success; any other value is an application error, even
- * when the HTTP status is 200. Every failure surfaces as a subclass of
- * {@link ZohoBooksError} so callers can `instanceof`-check without parsing text.
- */
-
+/** Fields every SDK error carries. */
 export interface ZohoErrorDetails {
-  /** HTTP status code of the response (0 when no response was received). */
+  /** HTTP status, or 0 when no response arrived. */
   status: number;
-  /** Zoho application error code from the response body, if present. */
+  /** Zoho application code from the response body. */
   code?: number | undefined;
-  /** HTTP method of the failed request. */
   method?: string | undefined;
-  /** Request path (relative to the Books API base, without query string). */
+  /** Request path relative to the Books API base. */
   path?: string | undefined;
-  /** Raw parsed response body, when available. */
+  /** Parsed response body. */
   body?: unknown;
-  /** Response headers, when available. */
   headers?: Record<string, string> | undefined;
-  /** Underlying error (network failure, JSON parse failure, ...). */
+  /** Underlying error such as a network failure. */
   cause?: unknown;
 }
 
+/** Base class for every error the SDK throws. */
 export class ZohoBooksError extends Error {
   readonly status: number;
   readonly code: number | undefined;
@@ -43,38 +34,33 @@ export class ZohoBooksError extends Error {
     this.headers = details.headers;
   }
 
-  /** Whether retrying the same request may succeed. */
+  /** True when repeating the same request may succeed. */
   get retryable(): boolean {
     return false;
   }
 }
 
-/** 400 or a non-zero Zoho code that indicates invalid input. */
+/** HTTP 400, or a non zero Zoho code. */
 export class ZohoValidationError extends ZohoBooksError {}
 
-/** 401: access token invalid/expired and could not be refreshed. */
+/** HTTP 401 that persisted after one token refresh. */
 export class ZohoAuthenticationError extends ZohoBooksError {}
 
-/** 403: the token lacks the scope, or the user lacks the permission. */
+/** HTTP 403, usually a missing scope. */
 export class ZohoPermissionError extends ZohoBooksError {}
 
-/** 404: resource or URL not found. */
+/** HTTP 404, or Zoho code 1002. */
 export class ZohoNotFoundError extends ZohoBooksError {}
 
-/** 405 / 415 and other request-shape errors. */
+/** HTTP 405 or 415. */
 export class ZohoRequestError extends ZohoBooksError {}
 
-/**
- * Which Zoho limit was hit:
- * - `minute`: 100 requests/minute/org (code 44) — wait for the window to roll.
- * - `daily`: plan's daily quota (code 45) — NOT retryable until the next day.
- * - `concurrency`: too many in-flight requests (code 1070) — retry shortly.
- */
+/** Which Zoho limit was hit: code 44 is per minute, 45 is the daily quota, 1070 is concurrency. */
 export type RateLimitKind = 'minute' | 'daily' | 'concurrency' | 'unknown';
 
-/** 429: per-minute, daily or concurrency limit exceeded. */
+/** HTTP 429. The daily quota is not retryable. */
 export class ZohoRateLimitError extends ZohoBooksError {
-  /** Milliseconds the server asked us to wait, if it said so. */
+  /** Wait the server asked for, in ms. */
   readonly retryAfterMs: number | undefined;
   readonly kind: RateLimitKind;
 
@@ -90,30 +76,30 @@ export class ZohoRateLimitError extends ZohoBooksError {
   }
 }
 
-/** 5xx from Zoho. */
+/** HTTP 5xx. */
 export class ZohoServerError extends ZohoBooksError {
   override get retryable(): boolean {
     return true;
   }
 }
 
-/** No HTTP response: DNS, TCP reset, TLS, etc. */
+/** No response arrived. */
 export class ZohoNetworkError extends ZohoBooksError {
   override get retryable(): boolean {
     return true;
   }
 }
 
-/** The request exceeded the configured timeout. */
+/** The request exceeded its timeout. */
 export class ZohoTimeoutError extends ZohoBooksError {
   override get retryable(): boolean {
     return true;
   }
 }
 
-/** OAuth token endpoint failures (invalid_code, invalid_client, ...). */
+/** The OAuth token endpoint refused the request. */
 export class ZohoOAuthError extends ZohoBooksError {
-  /** The OAuth `error` value, e.g. `invalid_code`. */
+  /** OAuth error value such as invalid_code. */
   readonly oauthError: string | undefined;
 
   constructor(message: string, details: ZohoErrorDetails & { oauthError?: string | undefined }) {
@@ -122,7 +108,7 @@ export class ZohoOAuthError extends ZohoBooksError {
   }
 }
 
-/** Local GST validation failure (bad GSTIN, missing tax, HSN...) — no request was sent. */
+/** Local GST validation failed. No request was sent. */
 export class ZohoGstError extends ZohoValidationError {
   readonly field: string | undefined;
   constructor(message: string, field?: string) {
@@ -131,22 +117,17 @@ export class ZohoGstError extends ZohoValidationError {
   }
 }
 
-/** SDK misconfiguration detected before any request was made. */
+/** Invalid SDK usage detected before any request was sent. */
 export class ZohoConfigError extends ZohoBooksError {
   constructor(message: string) {
     super(message, { status: 0 });
   }
 }
 
-/**
- * Documented Zoho codes for rate limiting (returned with HTTP 429):
- * 44 = per-minute, 45 = daily quota, 1070 = concurrency.
- */
 const RATE_LIMIT_CODES = new Set([44, 45, 1070]);
-
-/** Documented "record does not exist" code (e.g. "Invoice does not exist"). */
 const NOT_FOUND_CODES = new Set([1002]);
 
+/** Map a failed response to the matching error class. */
 export function errorFromResponse(details: ZohoErrorDetails & { retryAfterMs?: number | undefined }): ZohoBooksError {
   const { status, code } = details;
   const zohoMessage =

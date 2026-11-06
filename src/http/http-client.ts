@@ -10,39 +10,57 @@ import {
 import { RateLimiter, type RateLimiterOptions } from './rate-limiter.js';
 import type { BinaryResponse, FetchLike, Hooks, Logger, Query, RequestOptions } from './types.js';
 
+declare const __SDK_VERSION__: string;
+
 export interface RetryOptions {
-  /** Max retries after the first attempt. Default 3. */
+  /** Retries after the first attempt. Default 3. */
   maxRetries?: number;
-  /** Base delay for exponential backoff. Default 500 ms. */
+  /** Base backoff delay. Default 500 ms. */
   baseDelayMs?: number;
-  /** Max delay between attempts. Default 30 s. */
+  /** Max backoff delay. Default 30 s. */
   maxDelayMs?: number;
-  /** Delay after a 429 without Retry-After. Default 60 s (Zoho's window is a minute). */
+  /** Wait after a 429 without Retry After. Default 60 s, Zoho's window. */
   rateLimitDelayMs?: number;
 }
 
 export interface HttpClientOptions {
-  /** e.g. `https://www.zohoapis.in/books/v3` */
+  /** e.g. https://www.zohoapis.in/books/v3 */
   baseUrl: string;
   auth: AuthProvider;
   organizationId?: string | undefined;
   fetch?: FetchLike | undefined;
   timeoutMs?: number | undefined;
   retry?: RetryOptions | undefined;
-  /** Client-side throttling. Pass `false` to disable. */
+  /** Client side throttling. false disables it. */
   rateLimit?: RateLimiterOptions | false | undefined;
   userAgent?: string | undefined;
-  /**
-   * Use the `api_domain` Zoho returns with each token instead of `baseUrl`'s
-   * host (only `*.zohoapis.*` hosts are accepted). Default false.
-   */
+  /** Switch to the api_domain Zoho returns with each token. Only zohoapis hosts are accepted. */
   followTokenApiDomain?: boolean | undefined;
   hooks?: Hooks | undefined;
   logger?: Logger | undefined;
 }
 
-const SDK_VERSION = '0.1.0';
+export const SDK_VERSION: string = typeof __SDK_VERSION__ === 'string' ? __SDK_VERSION__ : 'dev';
 const RETRYABLE_METHODS = new Set(['GET', 'PUT', 'DELETE', 'PATCH']);
+
+/** Token that failed with each error, kept off the error object so logs never show it. */
+const failedTokens = new WeakMap<ZohoBooksError, string>();
+
+/** Wait ms, or reject early with the abort reason. */
+export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal!.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
 
 export class HttpClient {
   baseUrl: string;
@@ -56,8 +74,8 @@ export class HttpClient {
   private readonly hooks: Hooks;
   private readonly logger: Logger | undefined;
   private readonly followTokenApiDomain: boolean;
-  /** @internal overridable for tests */
-  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms));
+  /** @internal replaceable in tests */
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void> = abortableSleep;
 
   constructor(options: HttpClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
@@ -65,7 +83,7 @@ export class HttpClient {
     this.organizationId = options.organizationId;
     const f = options.fetch ?? globalThis.fetch;
     if (typeof f !== 'function') {
-      throw new ZohoConfigError('No fetch implementation found. Use Node.js >= 18 or pass `fetch` in the options.');
+      throw new ZohoConfigError('No fetch implementation found. Use Node.js 18.17 or newer, or pass fetch in the options.');
     }
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? 30_000;
@@ -82,7 +100,7 @@ export class HttpClient {
     this.followTokenApiDomain = options.followTokenApiDomain ?? false;
   }
 
-  /** Perform a request and return the parsed JSON envelope. */
+  /** Send a request and return the parsed JSON envelope, or the bytes for binary. */
   async request<T = Record<string, unknown>>(options: RequestOptions & { responseType?: 'json' }): Promise<T>;
   async request(options: RequestOptions & { responseType: 'binary' }): Promise<BinaryResponse>;
   async request(options: RequestOptions): Promise<unknown> {
@@ -92,29 +110,33 @@ export class HttpClient {
     for (let attempt = 1; ; attempt++) {
       try {
         const run = () => this.once(options, attempt);
-        return await (this.limiter ? this.limiter.schedule(run) : run());
+        return await (this.limiter ? this.limiter.schedule(run, options.signal) : run());
       } catch (error) {
         if (!(error instanceof ZohoBooksError)) throw error;
 
-        // 401 → refresh once and retry, regardless of method (nothing was processed).
+        // Nothing was processed on 401, so one refresh and replay is safe for any method.
         if (error.status === 401 && !authRetried && this.auth.invalidate) {
-          const token = (error as ZohoBooksError & { token?: string }).token ?? '';
           authRetried = true;
-          if (await this.auth.invalidate(token)) {
+          if (await this.auth.invalidate(failedTokens.get(error) ?? '')) {
             attempt--;
             continue;
           }
         }
 
-        // 429s are rejected before processing, so they are safe to retry for
-        // every method — except the daily quota, which won't reset for hours.
+        // Zoho rejects 429s before processing, so they are retried for every method except the daily quota.
         const isRateLimit = error instanceof ZohoRateLimitError;
         const retryable = isRateLimit ? error.retryable : error.retryable && canRetryAll;
         if (!retryable || attempt > this.retry.maxRetries || options.signal?.aborted) throw error;
 
         const delayMs = this.backoff(attempt, error);
         if (isRateLimit && error.kind !== 'concurrency') this.limiter?.pause(delayMs);
-        this.hooks.onRetry?.({ method: options.method, url: this.buildUrl(options.path, options.query, options.organizationId), attempt, delayMs, error });
+        this.hooks.onRetry?.({
+          method: options.method,
+          url: this.buildUrl(options.path, options.query, options.organizationId),
+          attempt,
+          delayMs,
+          error,
+        });
         this.logger?.warn('zoho-books: retrying request', {
           method: options.method,
           path: options.path,
@@ -122,7 +144,7 @@ export class HttpClient {
           delayMs,
           error: error.message,
         });
-        await this.sleep(delayMs);
+        await this.sleep(delayMs, options.signal);
       }
     }
   }
@@ -172,13 +194,7 @@ export class HttpClient {
         cause,
       });
     }
-    this.hooks.onResponse?.({
-      method: options.method,
-      url,
-      attempt,
-      status: res.status,
-      durationMs: Date.now() - started,
-    });
+    this.hooks.onResponse?.({ method: options.method, url, attempt, status: res.status, durationMs: Date.now() - started });
     this.logger?.debug('zoho-books: response', { method: options.method, path: options.path, status: res.status });
 
     const contentType = res.headers.get('content-type') ?? undefined;
@@ -196,7 +212,7 @@ export class HttpClient {
         parsed = JSON.parse(text);
       } catch (cause) {
         if (res.ok) {
-          throw new ZohoNetworkError('Zoho returned a non-JSON response', {
+          throw new ZohoNetworkError('Zoho returned a non JSON response', {
             status: res.status,
             method: options.method,
             path: options.path,
@@ -219,8 +235,7 @@ export class HttpClient {
         headers: headersToObject(res.headers),
         retryAfterMs: parseRetryAfter(res.headers.get('retry-after')),
       });
-      // Remember which token failed so invalidate() only drops that one.
-      (err as ZohoBooksError & { token?: string }).token = token;
+      failedTokens.set(err, token);
       throw err;
     }
     return parsed ?? {};
@@ -247,7 +262,7 @@ export class HttpClient {
     } catch {
       return;
     }
-    // Never send the bearer token to a non-Zoho host.
+    // Never send the token to a host outside Zoho.
     if (!/^(www\.)?zohoapis\.[a-z.]+$/.test(host)) return;
     const next = `https://${host}/books/v3`;
     if (next !== this.baseUrl) {
@@ -261,7 +276,6 @@ export class HttpClient {
       return Math.min(error.retryAfterMs ?? this.retry.rateLimitDelayMs, Math.max(this.retry.maxDelayMs, 60_000));
     }
     const exp = this.retry.baseDelayMs * 2 ** (attempt - 1);
-    // Full jitter.
     return Math.min(this.retry.maxDelayMs, Math.round(Math.random() * exp) + 1);
   }
 }
