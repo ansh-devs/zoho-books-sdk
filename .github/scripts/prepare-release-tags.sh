@@ -4,11 +4,14 @@ set -euo pipefail
 name=$(node -p "require('./package.json').name")
 # Is this version on npm? Fails the step on anything but a clear yes or not found.
 published() {
-  local out
-  if out=$(npm view "$name@$1" version 2>&1); then return 0; fi
-  if printf '%s' "$out" | grep -q 'E404'; then return 1; fi
-  echo "Could not check npm for $name@$1: $out" >&2
-  exit 1
+  # The version endpoint is current right after a publish; the full package document can lag for minutes.
+  local status
+  status=$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/$name/$1") || status=error
+  case "$status" in
+    200) return 0 ;;
+    404) return 1 ;;
+    *) echo "Could not check npm for $name@$1 (HTTP $status)" >&2; exit 1 ;;
+  esac
 }
 latest=$(git tag --list 'v*' --sort=-v:refname | grep -vx 'v0.0.0' | head -n 1 || true)
 if [ -n "$latest" ] && ! published "${latest#v}"; then
