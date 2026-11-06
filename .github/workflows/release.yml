@@ -36,13 +36,9 @@ jobs:
       # Fail before anything is tagged or published.
       - run: npm run check
 
-      # With no release tag yet, mark the first commit v0.0.0 so the first release is 0.1.0, not 1.0.0.
-      - name: Set the starting version
-        run: |
-          if [ -z "$(git tag --list 'v*')" ]; then
-            git tag v0.0.0 "$(git rev-list --max-parents=0 HEAD)"
-            git push origin v0.0.0
-          fi
+      # Removes a tag whose version never reached npm and its leftover note, and starts at v0.0.0 when nothing is tagged.
+      - name: Prepare release tags
+        run: bash .github/scripts/prepare-release-tags.sh
 
       # Sets the version, publishes to npm (prepublishOnly rebuilds with that version), tags it and writes the GitHub release.
       # Preset 9 matches the changelog writer semantic-release 25 bundles; preset 10 needs a newer writer.
